@@ -1,4 +1,4 @@
-import { Client } from 'aisuite';
+import { Client } from '../../../../src/client';
 import { Message, LLMConfig, AISuiteConfig } from '../types/chat';
 
 class AISuiteService {
@@ -25,9 +25,15 @@ class AISuiteService {
         })),
         temperature: 0.7,
         max_tokens: 1000,
+        stream: false, // Explicitly set stream to false to get ChatCompletionResponse
       });
 
-      return response.choices[0].message.content || 'No response from model';
+      // Type guard to ensure we have a ChatCompletionResponse
+      if ('choices' in response && Array.isArray(response.choices)) {
+        return response.choices[0].message.content || 'No response from model';
+      } else {
+        throw new Error('Unexpected response format from model');
+      }
     } catch (error) {
       console.error(`Error querying ${modelConfig.name}:`, error);
       throw new Error(`Error with ${modelConfig.name}: ${error instanceof Error ? error.message : 'Unknown error'}`);

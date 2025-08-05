@@ -40,6 +40,7 @@ export interface AISuiteConfig {
   groq?: {
     apiKey: string;
     baseURL?: string;
+    dangerouslyAllowBrowser?: boolean;
   };
   mistral?: {
     apiKey: string;

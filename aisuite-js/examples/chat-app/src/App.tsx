@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Settings, AlertCircle } from 'lucide-react';
-import { Message, AISuiteConfig, LLMConfig } from './types/chat';
+import { Message, AISuiteConfig } from './types/chat';
 import { configuredLLMs, getLLMConfigByName } from './config/llm-config';
 import { aiSuiteService } from './services/aisuite-service';
 import { ChatContainer } from './components/ChatContainer';

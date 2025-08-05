@@ -30,6 +30,7 @@ export const ApiKeyModal: React.FC<ApiKeyModalProps> = ({
     const filteredConfig: AISuiteConfig = {};
     Object.entries(config).forEach(([provider, providerConfig]) => {
       if (providerConfig?.apiKey?.trim()) {
+        providerConfig.dangerouslyAllowBrowser = true;
         filteredConfig[provider as keyof AISuiteConfig] = providerConfig;
       }
     });
