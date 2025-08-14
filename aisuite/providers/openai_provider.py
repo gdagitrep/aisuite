@@ -41,41 +41,39 @@ class OpenaiProvider(Provider):
         except Exception as e:
             raise LLMError(f"An error occurred: {e}")
 
-    def audio_transcriptions_create(self, model: str, file: Union[str, BinaryIO], **kwargs) -> TranscriptionResult:
+    def audio_transcriptions_create(
+        self, model: str, file: Union[str, BinaryIO], **kwargs
+    ) -> TranscriptionResult:
         """Create audio transcription using OpenAI Whisper API."""
         try:
             # Handle file input - if it's a string, assume it's a file path
             if isinstance(file, str):
-                with open(file, 'rb') as audio_file:
+                with open(file, "rb") as audio_file:
                     response = self.client.audio.transcriptions.create(
-                        model=model,
-                        file=audio_file,
-                        **kwargs
+                        model=model, file=audio_file, **kwargs
                     )
             else:
                 # Assume it's a file-like object
                 response = self.client.audio.transcriptions.create(
-                    model=model,
-                    file=file,
-                    **kwargs
+                    model=model, file=file, **kwargs
                 )
-            
+
             return self._parse_openai_response(response)
-            
+
         except Exception as e:
             raise ASRError(f"OpenAI transcription error: {e}")
-    
+
     def _parse_openai_response(self, response) -> TranscriptionResult:
         """Convert OpenAI API response to unified TranscriptionResult."""
         # Extract basic fields
         text = response.text
-        task = getattr(response, 'task', None)
-        language = getattr(response, 'language', None)
-        duration = getattr(response, 'duration', None)
-        
+        task = getattr(response, "task", None)
+        language = getattr(response, "language", None)
+        duration = getattr(response, "duration", None)
+
         # Handle segments if present (when timestamp_granularities includes 'segment')
         segments = []
-        if hasattr(response, 'segments') and response.segments:
+        if hasattr(response, "segments") and response.segments:
             segments = [
                 Segment(
                     id=seg.id,
@@ -83,27 +81,23 @@ class OpenaiProvider(Provider):
                     start=seg.start,
                     end=seg.end,
                     text=seg.text,
-                    tokens=getattr(seg, 'tokens', None),
-                    temperature=getattr(seg, 'temperature', None),
-                    avg_logprob=getattr(seg, 'avg_logprob', None),
-                    compression_ratio=getattr(seg, 'compression_ratio', None),
-                    no_speech_prob=getattr(seg, 'no_speech_prob', None)
+                    tokens=getattr(seg, "tokens", None),
+                    temperature=getattr(seg, "temperature", None),
+                    avg_logprob=getattr(seg, "avg_logprob", None),
+                    compression_ratio=getattr(seg, "compression_ratio", None),
+                    no_speech_prob=getattr(seg, "no_speech_prob", None),
                 )
                 for seg in response.segments
             ]
-        
+
         # Handle words if present (when timestamp_granularities includes 'word')
         words = []
-        if hasattr(response, 'words') and response.words:
+        if hasattr(response, "words") and response.words:
             words = [
-                Word(
-                    word=word.word,
-                    start=word.start,
-                    end=word.end
-                )
+                Word(word=word.word, start=word.start, end=word.end)
                 for word in response.words
             ]
-        
+
         return TranscriptionResult(
             text=text,
             task=task,
@@ -111,5 +105,5 @@ class OpenaiProvider(Provider):
             duration=duration,
             confidence=None,  # OpenAI doesn't provide overall confidence
             segments=segments,
-            words=words
+            words=words,
         )

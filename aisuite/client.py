@@ -257,7 +257,7 @@ class Completions:
 
 class Audio:
     """Audio API interface."""
-    
+
     def __init__(self, client: "Client"):
         self.client = client
         self._transcriptions = Transcriptions(self.client)
@@ -270,19 +270,19 @@ class Audio:
 
 class Transcriptions:
     """Transcriptions API interface."""
-    
+
     def __init__(self, client: "Client"):
         self.client = client
 
     def create(self, *, model: str, file: Union[str, BinaryIO], **kwargs):
         """
         Create a transcription using the specified model and file.
-        
+
         Args:
             model: Provider and model in format 'provider:model' (e.g., 'openai:whisper-1')
             file: Audio file to transcribe (file path or file-like object)
             **kwargs: Additional parameters to pass to the provider
-            
+
         Returns:
             TranscriptionResult: Unified transcription result
         """
@@ -319,4 +319,6 @@ class Transcriptions:
         try:
             return provider.audio_transcriptions_create(model_name, file, **kwargs)
         except NotImplementedError:
-            raise ValueError(f"Provider '{provider_key}' does not support audio transcription.")
+            raise ValueError(
+                f"Provider '{provider_key}' does not support audio transcription."
+            )
