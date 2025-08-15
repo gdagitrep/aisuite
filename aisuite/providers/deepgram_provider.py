@@ -180,7 +180,8 @@ class DeepgramProvider(Provider):
             # Extract advanced features if available
             metadata = response_data.get("metadata", None)
             utterances = best_alternative.get("utterances", None)
-            paragraphs_data = paragraphs if paragraphs else None
+            # Convert paragraphs dict to list format for TranscriptionResult
+            paragraphs_data = paragraphs.get("paragraphs", []) if paragraphs else None
             topics = results.get("topics", None)
             intents = results.get("intents", None)
             sentiment = results.get("sentiment", None)
