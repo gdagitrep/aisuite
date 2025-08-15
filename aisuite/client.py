@@ -28,7 +28,6 @@ class Client:
         self.provider_configs = provider_configs
         self._chat = None
         self._audio = None
-        self._initialize_providers()
 
     def _initialize_providers(self):
         """Helper method to initialize or update providers."""
@@ -60,7 +59,7 @@ class Client:
             return
 
         self.provider_configs.update(provider_configs)
-        self._initialize_providers()  # NOTE: This will override existing provider instances.
+        # Providers will be lazily initialized when needed
 
     @property
     def chat(self):

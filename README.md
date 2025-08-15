@@ -237,7 +237,7 @@ result = client.audio.transcriptions.create(
 )
 ```
 
-**Supported providers:** OpenAI, Deepgram
+**Supported providers:** OpenAI, Deepgram, Google.
 
 **Key features:** Same `provider:model` format • Rich metadata (timestamps, confidence, speakers) • Provider-specific advanced features
 
