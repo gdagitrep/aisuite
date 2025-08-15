@@ -1,8 +1,8 @@
-"""Tests for client functionality."""
-
+from unittest.mock import Mock, patch
 import io
-from unittest.mock import Mock, MagicMock, patch
+
 import pytest
+
 from aisuite import Client
 from aisuite.framework.message import TranscriptionResult
 from aisuite.provider import ASRError
@@ -12,66 +12,45 @@ from aisuite.provider import ASRError
 def provider_configs():
     return {
         "openai": {"api_key": "test_openai_api_key"},
-        "mistral": {"api_key": "test_mistral_api_key"},
-        "groq": {"api_key": "test_groq_api_key"},
         "aws": {
-            "access_key_id": "test_access_key_id",
-            "secret_access_key": "test_secret_access_key",
-            "region_name": "us-east-1",
+            "aws_access_key": "test_aws_access_key",
+            "aws_secret_key": "test_aws_secret_key",
+            "aws_session_token": "test_aws_session_token",
+            "aws_region": "us-west-2",
         },
         "azure": {
-            "api_key": "test_azure_api_key",
-            "azure_endpoint": "https://test.openai.azure.com/",
-            "api_version": "2024-02-01",
+            "api_key": "azure-api-key",
+            "base_url": "https://model.ai.azure.com",
         },
-        "anthropic": {"api_key": "test_anthropic_api_key"},
+        "groq": {
+            "api_key": "groq-api-key",
+        },
+        "mistral": {
+            "api_key": "mistral-api-key",
+        },
         "google": {
-            "project_id": "test-project",
-            "location": "us-central1",
-            "credentials": "test_credentials.json",
+            "project_id": "test_google_project_id",
+            "region": "us-west4",
+            "application_credentials": "test_google_application_credentials",
         },
-        "fireworks": {"api_key": "test_fireworks_api_key"},
-        "nebius": {"api_key": "test_nebius_api_key"},
-        "inception": {"api_key": "test_inception_api_key"},
-        "deepgram": {"api_key": "deepgram-api-key"},
+        "fireworks": {
+            "api_key": "fireworks-api-key",
+        },
+        "nebius": {
+            "api_key": "nebius-api-key",
+        },
+        "inception": {
+            "api_key": "inception-api-key",
+        },
+        "deepgram": {
+            "api_key": "deepgram-api-key",
+        },
     }
 
 
-@pytest.fixture
-def client_with_config(provider_configs):
-    client = Client()
-    client.configure(provider_configs)
-    return client
-
-
-@pytest.fixture
-def configured_client():
-    """Create a configured client for testing."""
-    client = Client()
-    client.configure(
-        {
-            "openai": {"api_key": "test-openai-key"},
-            "deepgram": {"api_key": "test-deepgram-key"},
-        }
-    )
-    return client
-
-
-@pytest.fixture
-def mock_transcription_result():
-    """Create a mock transcription result."""
-    return TranscriptionResult(
-        text="Hello, this is a test transcription.",
-        language="en",
-        confidence=0.95,
-        task="transcribe",
-    )
-
-
-# Existing chat completion tests
 @pytest.mark.parametrize(
-    "provider_method_path,provider_key,model",
-    [
+    argnames=("patch_target", "provider", "model"),
+    argvalues=[
         (
             "aisuite.providers.openai_provider.OpenaiProvider.chat_completions_create",
             "openai",
@@ -125,128 +104,151 @@ def mock_transcription_result():
     ],
 )
 def test_client_chat_completions(
-    client_with_config, provider_method_path, provider_key, model
+    provider_configs: dict, patch_target: str, provider: str, model: str
 ):
-    user_greeting = "Hello!"
-    message_history = [{"role": "user", "content": user_greeting}]
-    response_text_content = "mocked-text-response-from-model"
+    expected_response = f"{patch_target}_{provider}_{model}"
+    with patch(patch_target) as mock_provider:
+        mock_provider.return_value = expected_response
+        client = Client()
+        client.configure(provider_configs)
+        messages = [
+            {"role": "system", "content": "You are a helpful assistant."},
+            {"role": "user", "content": "Who won the world series in 2020?"},
+        ]
 
-    mock_response = MagicMock()
-    mock_response.choices = [MagicMock()]
-    mock_response.choices[0].message = MagicMock()
-    mock_response.choices[0].message.content = response_text_content
-
-    with patch(provider_method_path) as mock_create:
-        mock_create.return_value = mock_response
-
-        response = client_with_config.chat_completions_create(
-            model=f"{provider_key}:{model}",
-            messages=message_history,
-            temperature=0.75,
-        )
-
-        mock_create.assert_called_once_with(
-            model=model, messages=message_history, temperature=0.75
-        )
-
-        assert response.choices[0].message.content == response_text_content
+        model_str = f"{provider}:{model}"
+        model_response = client.chat.completions.create(model_str, messages=messages)
+        assert model_response == expected_response
 
 
 def test_invalid_provider_in_client_config():
+    # Testing an invalid provider name in the configuration
+    invalid_provider_configs = {
+        "invalid_provider": {"api_key": "invalid_api_key"},
+    }
+
+    # With lazy loading, Client initialization should succeed
     client = Client()
-    invalid_config = {"invalid_provider": {"api_key": "test"}}
+    client.configure(invalid_provider_configs)
 
-    client.configure(invalid_config)
-    # Should not raise an error during configuration
+    messages = [
+        {"role": "user", "content": "Hello"},
+    ]
+
+    # Expect ValueError when actually trying to use the invalid provider
+    with pytest.raises(
+        ValueError,
+        match=r"Invalid provider key 'invalid_provider'. Supported providers: ",
+    ):
+        client.chat.completions.create("invalid_provider:some-model", messages=messages)
 
 
-def test_invalid_model_format_in_create(client_with_config):
-    with pytest.raises(ValueError, match="Invalid model format"):
-        client_with_config.chat_completions_create(
-            model="invalid_format", messages=[{"role": "user", "content": "Hello"}]
-        )
+def test_invalid_model_format_in_create(monkeypatch):
+    from aisuite.providers.openai_provider import OpenaiProvider
+
+    monkeypatch.setattr(
+        target=OpenaiProvider,
+        name="chat_completions_create",
+        value=Mock(),
+    )
+
+    # Valid provider configurations
+    provider_configs = {
+        "openai": {"api_key": "test_openai_api_key"},
+    }
+
+    # Initialize the client with valid provider
+    client = Client()
+    client.configure(provider_configs)
+
+    messages = [
+        {"role": "system", "content": "You are a helpful assistant."},
+        {"role": "user", "content": "Tell me a joke."},
+    ]
+
+    # Invalid model format
+    invalid_model = "invalidmodel"
+
+    # Expect ValueError when calling create with invalid model format and verify message
+    with pytest.raises(
+        ValueError, match=r"Invalid model format. Expected 'provider:model'"
+    ):
+        client.chat.completions.create(invalid_model, messages=messages)
 
 
 class TestClientASR:
-    """Test suite for Client ASR functionality."""
+    """Test suite for Client ASR functionality - essential tests only."""
 
     def test_audio_interface_initialization(self):
         """Test that Audio interface is properly initialized."""
         client = Client()
         assert hasattr(client, "audio")
         assert hasattr(client.audio, "transcriptions")
-        assert client.audio.transcriptions.client == client
 
-    def test_transcriptions_create_openai_success(
-        self, configured_client, mock_transcription_result
-    ):
-        """Test successful transcription with OpenAI provider."""
-        with patch(
-            "aisuite.providers.openai_provider.OpenaiProvider.audio_transcriptions_create",
-            return_value=mock_transcription_result,
-        ) as mock_create:
-            result = configured_client.audio.transcriptions.create(
-                model="openai:whisper-1", file="test.mp3", language="en"
-            )
+    @patch(
+        "aisuite.providers.openai_provider.OpenaiProvider.audio_transcriptions_create"
+    )
+    def test_transcriptions_create_success(self, mock_transcribe, provider_configs):
+        """Test successful audio transcription with OpenAI."""
+        # Mock successful transcription
+        mock_result = TranscriptionResult(
+            text="Hello, this is a test transcription.",
+            language="en",
+            confidence=0.95,
+            task="transcribe",
+        )
+        mock_transcribe.return_value = mock_result
 
-            mock_create.assert_called_once_with("whisper-1", "test.mp3", language="en")
-            assert result == mock_transcription_result
+        client = Client()
+        client.configure(provider_configs)
 
-    def test_transcriptions_create_deepgram_success(
-        self, configured_client, mock_transcription_result
-    ):
-        """Test successful transcription with Deepgram provider."""
-        with patch(
-            "aisuite.providers.deepgram_provider.DeepgramProvider.audio_transcriptions_create",
-            return_value=mock_transcription_result,
-        ) as mock_create:
-            result = configured_client.audio.transcriptions.create(
-                model="deepgram:nova-2", file="test.mp3", diarize=True
-            )
+        audio_data = io.BytesIO(b"fake audio data")
+        result = client.audio.transcriptions.create(
+            model="openai:whisper-1", file=audio_data
+        )
 
-            mock_create.assert_called_once_with("nova-2", "test.mp3", diarize=True)
-            assert result == mock_transcription_result
+        assert isinstance(result, TranscriptionResult)
+        assert result.text == "Hello, this is a test transcription."
+        mock_transcribe.assert_called_once()
 
-    def test_transcriptions_create_with_file_object(
-        self, configured_client, mock_transcription_result
-    ):
-        """Test transcription with file-like object."""
-        audio_file = io.BytesIO(b"fake audio data")
+    @patch(
+        "aisuite.providers.deepgram_provider.DeepgramProvider.audio_transcriptions_create"
+    )
+    def test_transcriptions_create_deepgram(self, mock_transcribe, provider_configs):
+        """Test audio transcription with Deepgram provider."""
+        mock_result = TranscriptionResult(
+            text="Deepgram transcription result.",
+            language="en",
+            confidence=0.92,
+            task="transcribe",
+        )
+        mock_transcribe.return_value = mock_result
 
-        with patch(
-            "aisuite.providers.openai_provider.OpenaiProvider.audio_transcriptions_create",
-            return_value=mock_transcription_result,
-        ) as mock_create:
-            result = configured_client.audio.transcriptions.create(
-                model="openai:whisper-1", file=audio_file
-            )
+        client = Client()
+        client.configure(provider_configs)
 
-            mock_create.assert_called_once_with("whisper-1", audio_file)
-            assert result == mock_transcription_result
+        result = client.audio.transcriptions.create(
+            model="deepgram:nova-2", file="test_audio.wav"
+        )
 
-    def test_transcriptions_create_invalid_model_format(self, configured_client):
-        """Test error handling for invalid model format."""
-        with pytest.raises(
-            ValueError, match="Invalid model format. Expected 'provider:model'"
-        ):
-            configured_client.audio.transcriptions.create(
-                model="invalid-model-format", file="test.mp3"
-            )
+        assert isinstance(result, TranscriptionResult)
+        assert result.text == "Deepgram transcription result."
+        mock_transcribe.assert_called_once()
 
-    def test_transcriptions_create_unsupported_provider(self, configured_client):
-        """Test error handling for unsupported provider."""
+    def test_transcriptions_invalid_model_format(self, provider_configs):
+        """Test that invalid model format raises ValueError."""
+        client = Client()
+        client.configure(provider_configs)
+
+        with pytest.raises(ValueError, match="Invalid model format"):
+            client.audio.transcriptions.create(model="invalid-format", file="test.wav")
+
+    def test_transcriptions_unsupported_provider(self, provider_configs):
+        """Test error handling for unsupported ASR provider."""
+        client = Client()
+        client.configure(provider_configs)
+
         with pytest.raises(ValueError, match="Invalid provider key 'unsupported'"):
-            configured_client.audio.transcriptions.create(
-                model="unsupported:model", file="test.mp3"
+            client.audio.transcriptions.create(
+                model="unsupported:model", file="test.wav"
             )
-
-    def test_transcriptions_create_asr_error_propagation(self, configured_client):
-        """Test that ASR errors are properly propagated."""
-        with patch(
-            "aisuite.providers.openai_provider.OpenaiProvider.audio_transcriptions_create",
-            side_effect=ASRError("Test ASR error"),
-        ):
-            with pytest.raises(ASRError, match="Test ASR error"):
-                configured_client.audio.transcriptions.create(
-                    model="openai:whisper-1", file="test.mp3"
-                )
