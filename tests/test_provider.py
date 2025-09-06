@@ -2,28 +2,55 @@
 
 import pytest
 from unittest.mock import MagicMock
+from typing import Union, BinaryIO, Optional, AsyncGenerator
 
-from aisuite.provider import Provider, ASRError
-from aisuite.framework.message import TranscriptionResult
+from aisuite.provider import Provider, ASRError, Audio
+from aisuite.framework.message import (
+    TranscriptionResult,
+    TranscriptionOptions,
+    StreamingTranscriptionChunk,
+)
 
 
 class MockProvider(Provider):
-    """Mock provider for testing."""
+    """Mock provider for testing (no audio support)."""
 
     def chat_completions_create(self, model, messages):
         return MagicMock()
+
+
+class MockTranscription(Audio.Transcription):
+    """Mock transcription implementation."""
+
+    def create(
+        self,
+        model: str,
+        file: Union[str, BinaryIO],
+        options: Optional[TranscriptionOptions] = None,
+        **kwargs,
+    ) -> TranscriptionResult:
+        return TranscriptionResult(
+            text="Mock transcription result", language="en", confidence=0.9
+        )
+
+
+class MockAudio(Audio):
+    """Mock audio implementation."""
+
+    def __init__(self):
+        super().__init__()
+        self.transcriptions = MockTranscription()
 
 
 class MockASRProvider(Provider):
     """Mock provider that implements ASR."""
 
+    def __init__(self):
+        super().__init__()
+        self.audio = MockAudio()
+
     def chat_completions_create(self, model, messages):
         return MagicMock()
-
-    def audio_transcriptions_create(self, model, file, **kwargs):
-        return TranscriptionResult(
-            text="Mock transcription result", language="en", confidence=0.9
-        )
 
 
 class TestProvider:
@@ -34,26 +61,36 @@ class TestProvider:
         with pytest.raises(TypeError):
             Provider()
 
-    def test_provider_audio_transcriptions_create_default_implementation(self):
-        """Test that default ASR implementation raises NotImplementedError."""
+    def test_provider_without_audio_support(self):
+        """Test that provider without audio support has None audio attribute."""
         provider = MockProvider()
-
-        with pytest.raises(
-            NotImplementedError,
-            match="Provider MockProvider does not support audio transcription",
-        ):
-            provider.audio_transcriptions_create("whisper-1", "audio.mp3")
+        assert provider.audio is None
 
     def test_provider_asr_implementation_works(self):
         """Test that providers can successfully implement ASR."""
         provider = MockASRProvider()
 
-        result = provider.audio_transcriptions_create("model", "file.mp3")
+        assert provider.audio is not None
+        assert hasattr(provider.audio, "transcriptions")
+
+        result = provider.audio.transcriptions.create("model", "file.mp3")
 
         assert isinstance(result, TranscriptionResult)
         assert result.text == "Mock transcription result"
         assert result.language == "en"
         assert result.confidence == 0.9
+
+    def test_transcription_base_class_not_implemented(self):
+        """Test that base Transcription class raises NotImplementedError."""
+        transcription = Audio.Transcription()
+
+        with pytest.raises(NotImplementedError, match="Transcription not supported"):
+            transcription.create("model", "file.mp3")
+
+    def test_audio_base_class_initialization(self):
+        """Test that base Audio class initializes correctly."""
+        audio = Audio()
+        assert audio.transcriptions is None
 
 
 class TestASRError:

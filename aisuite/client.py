@@ -1,7 +1,11 @@
 from .provider import ProviderFactory
 import os
 from .utils.tools import Tools
-from typing import Union, BinaryIO
+from typing import Union, BinaryIO, Optional, Any
+from .framework.message import (
+    TranscriptionOptions,
+    TranscriptionResponse,
+)
 
 
 class Client:
@@ -51,7 +55,7 @@ class Client:
 
         return provider_key
 
-    def configure(self, provider_configs: dict = None):
+    def configure(self, provider_configs: Optional[dict] = None):
         """
         Configure the client with provider configurations.
         """
@@ -124,7 +128,7 @@ class Completions:
         provider,
         model_name: str,
         messages: list,
-        tools: any,
+        tools: Any,
         max_turns: int,
         **kwargs,
     ):
@@ -273,18 +277,47 @@ class Transcriptions:
     def __init__(self, client: "Client"):
         self.client = client
 
-    def create(self, *, model: str, file: Union[str, BinaryIO], **kwargs):
+    def create(
+        self,
+        *,
+        model: str,
+        file: Union[str, BinaryIO],
+        options: Optional[TranscriptionOptions] = None,
+        **kwargs,
+    ) -> TranscriptionResponse:
         """
         Create a transcription using the specified model and file.
 
         Args:
             model: Provider and model in format 'provider:model' (e.g., 'openai:whisper-1')
             file: Audio file to transcribe (file path or file-like object)
-            **kwargs: Additional parameters to pass to the provider
+            options: TranscriptionOptions instance with unified parameters (includes stream control)
+            **kwargs: Additional parameters (used if options is None, assumed to be OpenAI format)
 
         Returns:
-            TranscriptionResult: Unified transcription result
+            TranscriptionResponse: Unified response (batch or streaming based on options.stream)
         """
+        # Validate options and kwargs
+        if options is not None:
+            if not options.has_any_parameters():
+                raise ValueError(
+                    "TranscriptionOptions provided but no parameters are set. "
+                    "Please set at least one parameter or pass None to use kwargs."
+                )
+            # TranscriptionOptions takes precedence, ignore kwargs
+            if kwargs:
+                import warnings
+
+                warnings.warn(
+                    "Both TranscriptionOptions and kwargs provided. Using TranscriptionOptions and ignoring kwargs.",
+                    UserWarning,
+                )
+        elif not kwargs:
+            # Neither options nor kwargs provided
+            raise ValueError(
+                "Either TranscriptionOptions or kwargs must be provided for transcription parameters."
+            )
+
         # Check that correct format is used
         if ":" not in model:
             raise ValueError(
@@ -294,29 +327,59 @@ class Transcriptions:
         # Extract the provider key from the model identifier
         provider_key, model_name = model.split(":", 1)
 
-        # Validate if the provider is supported
-        supported_providers = ProviderFactory.get_supported_providers()
-        if provider_key not in supported_providers:
-            raise ValueError(
-                f"Invalid provider key '{provider_key}'. Supported providers: {supported_providers}. "
-                "Make sure the model string is formatted correctly as 'provider:model'."
-            )
-
         # Initialize provider if not already initialized
         if provider_key not in self.client.providers:
             config = self.client.provider_configs.get(provider_key, {})
-            self.client.providers[provider_key] = ProviderFactory.create_provider(
-                provider_key, config
-            )
+            try:
+                self.client.providers[provider_key] = ProviderFactory.create_provider(
+                    provider_key, config
+                )
+            except ImportError as e:
+                raise ValueError(f"Provider '{provider_key}' is not available: {e}")
 
         provider = self.client.providers.get(provider_key)
         if not provider:
             raise ValueError(f"Could not load provider for '{provider_key}'.")
 
+        # Check if provider supports audio transcription
+        if not hasattr(provider, "audio") or provider.audio is None:
+            raise ValueError(
+                f"Provider '{provider_key}' does not support audio transcription."
+            )
+
+        # Determine if streaming is requested
+        should_stream = False  # Default to batch processing
+        if options and options.stream is not None:
+            should_stream = options.stream
+        elif kwargs.get("stream"):
+            should_stream = kwargs.get("stream", False)
+
         # Delegate the transcription to the correct provider's implementation
-        # The provider will raise NotImplementedError if it doesn't support ASR
         try:
-            return provider.audio_transcriptions_create(model_name, file, **kwargs)
+            if should_stream:
+                # Check if provider supports output streaming
+                if hasattr(provider.audio, "transcriptions") and hasattr(
+                    provider.audio.transcriptions, "create_stream_output"
+                ):
+                    return provider.audio.transcriptions.create_stream_output(
+                        model_name, file, options=options, **kwargs
+                    )
+                else:
+                    raise ValueError(
+                        f"Provider '{provider_key}' does not support output streaming transcription."
+                    )
+            else:
+                # Non-streaming (batch) transcription
+                if hasattr(provider.audio, "transcriptions") and hasattr(
+                    provider.audio.transcriptions, "create"
+                ):
+                    return provider.audio.transcriptions.create(
+                        model_name, file, options=options, **kwargs
+                    )
+                else:
+                    raise ValueError(
+                        f"Provider '{provider_key}' does not support audio transcription."
+                    )
         except NotImplementedError:
             raise ValueError(
                 f"Provider '{provider_key}' does not support audio transcription."

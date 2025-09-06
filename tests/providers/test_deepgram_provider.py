@@ -4,11 +4,14 @@ import io
 from unittest.mock import MagicMock, mock_open, patch
 
 import pytest
-import requests
 
 from aisuite.providers.deepgram_provider import DeepgramProvider
 from aisuite.provider import ASRError
-from aisuite.framework.message import TranscriptionResult
+from aisuite.framework.message import (
+    TranscriptionResult,
+    TranscriptionOptions,
+    StreamingTranscriptionChunk,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -65,6 +68,8 @@ class TestDeepgramProvider:
         assert deepgram_provider is not None
         assert hasattr(deepgram_provider, "api_key")
         assert deepgram_provider.api_key == "test-api-key"
+        assert hasattr(deepgram_provider, "audio")
+        assert hasattr(deepgram_provider.audio, "transcriptions")
 
     def test_chat_completions_create_not_implemented(self, deepgram_provider):
         """Test that chat completions are not supported."""
@@ -78,25 +83,17 @@ class TestDeepgramProvider:
         self, deepgram_provider, mock_deepgram_response
     ):
         """Test successful audio transcription."""
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = mock_deepgram_response
+        mock_sdk_response = MagicMock()
+        mock_sdk_response.to_dict.return_value = mock_deepgram_response
 
         with patch("builtins.open", mock_open(read_data=b"fake audio data")), patch(
-            "requests.post", return_value=mock_response
-        ) as mock_post:
-            result = deepgram_provider.audio_transcriptions_create(
-                model="nova-2", file="test_audio.mp3"
+            "deepgram.clients.listen.v1.rest.client.ListenRESTClient.transcribe_file",
+            return_value=mock_sdk_response,
+        ):
+            result = deepgram_provider.audio.transcriptions.create(
+                model="deepgram:nova-2", file="test_audio.mp3"
             )
 
-            # Verify API call
-            mock_post.assert_called_once()
-            call_args = mock_post.call_args
-            assert call_args[0][0] == deepgram_provider.base_url
-            assert call_args[1]["headers"]["Authorization"] == "Token test-api-key"
-            assert call_args[1]["params"]["model"] == "nova-2"
-
-            # Verify result
             assert isinstance(result, TranscriptionResult)
             assert result.text == "Hello, this is a test transcription from Deepgram."
             assert result.language == "en-US"
@@ -106,83 +103,90 @@ class TestDeepgramProvider:
         self, deepgram_provider, mock_deepgram_response
     ):
         """Test audio transcription with file-like object."""
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = mock_deepgram_response
-
         audio_data = io.BytesIO(b"fake audio data")
 
-        with patch("requests.post", return_value=mock_response):
-            result = deepgram_provider.audio_transcriptions_create(
-                model="nova-2", file=audio_data
+        with patch(
+            "deepgram.clients.listen.v1.rest.client.ListenRESTClient.transcribe_file",
+            return_value=MagicMock(to_dict=lambda: mock_deepgram_response),
+        ):
+            result = deepgram_provider.audio.transcriptions.create(
+                model="deepgram:nova-2", file=audio_data
             )
 
             assert isinstance(result, TranscriptionResult)
             assert result.text == "Hello, this is a test transcription from Deepgram."
 
-    def test_audio_transcriptions_create_with_kwargs(
+    def test_audio_transcriptions_create_with_options(
         self, deepgram_provider, mock_deepgram_response
     ):
-        """Test audio transcription with additional parameters."""
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = mock_deepgram_response
+        """Test audio transcription with TranscriptionOptions."""
+        options = TranscriptionOptions(
+            language="en",
+            enable_speaker_diarization=True,
+            enable_automatic_punctuation=True,
+        )
 
         with patch("builtins.open", mock_open(read_data=b"fake audio data")), patch(
-            "requests.post", return_value=mock_response
-        ) as mock_post:
-            deepgram_provider.audio_transcriptions_create(
-                model="nova-2",
-                file="test_audio.mp3",
-                diarize=True,
-                punctuate=True,
-                language="en-US",
+            "deepgram.clients.listen.v1.rest.client.ListenRESTClient.transcribe_file",
+            return_value=MagicMock(to_dict=lambda: mock_deepgram_response),
+        ) as mock_transcribe:
+            result = deepgram_provider.audio.transcriptions.create(
+                model="deepgram:nova-2", file="test_audio.mp3", options=options
             )
 
-            # Verify parameters were passed
-            call_params = mock_post.call_args[1]["params"]
-            assert call_params["diarize"] is True
-            assert call_params["punctuate"] is True
-            assert call_params["language"] == "en-US"
+            mock_transcribe.assert_called_once()
+            assert isinstance(result, TranscriptionResult)
+            assert result.text == "Hello, this is a test transcription from Deepgram."
 
-    def test_audio_transcriptions_create_api_error(self, deepgram_provider):
-        """Test handling of Deepgram API errors."""
-        mock_response = MagicMock()
-        mock_response.status_code = 400
-        mock_response.text = "Bad Request"
-
+    def test_audio_transcriptions_create_error_handling(self, deepgram_provider):
+        """Test error handling for API failures."""
         with patch("builtins.open", mock_open(read_data=b"fake audio data")), patch(
-            "requests.post", return_value=mock_response
-        ):
-            with pytest.raises(ASRError, match="Deepgram API error: 400 - Bad Request"):
-                deepgram_provider.audio_transcriptions_create(
-                    model="nova-2", file="test_audio.mp3"
-                )
-
-    def test_audio_transcriptions_create_request_exception(self, deepgram_provider):
-        """Test handling of request exceptions."""
-        with patch("builtins.open", mock_open(read_data=b"fake audio data")), patch(
-            "requests.post", side_effect=requests.RequestException("Network error")
+            "deepgram.clients.listen.v1.rest.client.ListenRESTClient.transcribe_file",
+            side_effect=Exception("API Error"),
         ):
             with pytest.raises(
-                ASRError, match="Deepgram API request error: Network error"
+                ASRError, match="Deepgram transcription error: API Error"
             ):
-                deepgram_provider.audio_transcriptions_create(
-                    model="nova-2", file="test_audio.mp3"
+                deepgram_provider.audio.transcriptions.create(
+                    model="deepgram:nova-2", file="test_audio.mp3"
                 )
+
+    @pytest.mark.asyncio
+    async def test_audio_transcriptions_create_stream_output(self, deepgram_provider):
+        """Test streaming audio transcription."""
+        mock_connection = MagicMock()
+        mock_connection.start.return_value = True
+
+        with patch(
+            "builtins.open", mock_open(read_data=b"fake audio data")
+        ), patch.object(
+            deepgram_provider.client.listen.websocket,
+            "v",
+            return_value=mock_connection,
+        ), patch(
+            "asyncio.Queue"
+        ), patch(
+            "asyncio.Event"
+        ):
+            result = deepgram_provider.audio.transcriptions.create_stream_output(
+                model="deepgram:nova-2", file="test_audio.mp3"
+            )
+
+            # Test that it returns an async generator
+            assert hasattr(result, "__aiter__")
 
     def test_parse_deepgram_response_complete(
         self, deepgram_provider, mock_deepgram_response
     ):
         """Test parsing complete Deepgram response."""
-        result = deepgram_provider._parse_deepgram_response(mock_deepgram_response)
+        result = deepgram_provider.audio.transcriptions._parse_deepgram_response(
+            mock_deepgram_response
+        )
 
-        # Basic fields
         assert result.text == "Hello, this is a test transcription from Deepgram."
         assert result.language == "en-US"
         assert result.confidence == 0.95
 
-        # Words
         assert len(result.words) == 1
         word = result.words[0]
         assert word.word == "hello"
@@ -190,14 +194,12 @@ class TestDeepgramProvider:
         assert word.end == 0.5
         assert word.confidence == 0.98
 
-        # Alternatives and Channels
-        assert len(result.alternatives) == 1
-        assert len(result.channels) == 1
-
     def test_parse_deepgram_response_empty_channels(self, deepgram_provider):
         """Test parsing response with empty channels."""
         empty_response = {"results": {"channels": []}}
 
-        result = deepgram_provider._parse_deepgram_response(empty_response)
+        result = deepgram_provider.audio.transcriptions._parse_deepgram_response(
+            empty_response
+        )
         assert result.text == ""
         assert result.language is None

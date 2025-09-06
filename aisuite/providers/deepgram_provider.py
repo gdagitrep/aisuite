@@ -1,15 +1,18 @@
 import os
-import requests
-import json
-from typing import Union, BinaryIO
-from aisuite.provider import Provider, ASRError
+import asyncio
+from typing import Union, BinaryIO, Optional, AsyncGenerator
+
+from aisuite.provider import Provider, ASRError, Audio
 from aisuite.framework.message import (
     TranscriptionResult,
     Segment,
     Word,
     Alternative,
     Channel,
+    TranscriptionOptions,
+    StreamingTranscriptionChunk,
 )
+from aisuite.framework.parameter_mapper import ParameterMapper
 
 
 class DeepgramProvider(Provider):
@@ -17,6 +20,8 @@ class DeepgramProvider(Provider):
 
     def __init__(self, **config):
         """Initialize the Deepgram provider with the given configuration."""
+        super().__init__()
+
         # Ensure API key is provided either in config or via environment variable
         self.api_key = config.get("api_key") or os.getenv("DEEPGRAM_API_KEY")
         if not self.api_key:
@@ -24,7 +29,21 @@ class DeepgramProvider(Provider):
                 "Deepgram API key is missing. Please provide it in the config or set the DEEPGRAM_API_KEY environment variable."
             )
 
-        self.base_url = config.get("base_url", "https://api.deepgram.com/v1/listen")
+        # Initialize Deepgram client
+        try:
+            from deepgram import DeepgramClient, DeepgramClientOptions
+
+            client_options = DeepgramClientOptions(
+                api_key=self.api_key, options={"keepalive": "true"}
+            )
+            self.client = DeepgramClient(self.api_key, client_options)
+        except ImportError:
+            raise ImportError(
+                "Deepgram SDK is required. Install it with: pip install deepgram-sdk"
+            )
+
+        # Initialize audio functionality
+        self.audio = DeepgramAudio(self.client)
 
     def chat_completions_create(self, model, messages):
         """Deepgram does not support chat completions."""
@@ -32,179 +51,273 @@ class DeepgramProvider(Provider):
             "Deepgram provider only supports audio transcription, not chat completions."
         )
 
-    def audio_transcriptions_create(
-        self, model: str, file: Union[str, BinaryIO], **kwargs
-    ) -> TranscriptionResult:
-        """Perform transcription using Deepgram API."""
-        try:
-            headers = {
-                "Authorization": f"Token {self.api_key}",
-                "Content-Type": "audio/*",
-            }
 
-            # Build query parameters
-            params = {"model": model}
-            params.update(kwargs)
+# Audio Classes
+class DeepgramAudio(Audio):
+    """Deepgram Audio functionality container."""
 
-            # Handle file input
+    def __init__(self, client):
+        super().__init__()
+        self.transcriptions = self.Transcriptions(client)
+
+    class Transcriptions(Audio.Transcription):
+        """Deepgram Audio Transcriptions functionality."""
+
+        def __init__(self, client):
+            self.client = client
+
+        def create(
+            self,
+            model: str,
+            file: Union[str, BinaryIO],
+            options: Optional[TranscriptionOptions] = None,
+            **kwargs,
+        ) -> TranscriptionResult:
+            """Create audio transcription using Deepgram SDK."""
+            try:
+                from deepgram import PrerecordedOptions
+
+                api_params = self._prepare_api_params(model, options, kwargs)
+                deepgram_options = PrerecordedOptions(**api_params)
+                payload = self._prepare_audio_payload(file)
+
+                response = self.client.listen.rest.v("1").transcribe_file(
+                    payload, deepgram_options
+                )
+
+                response_dict = (
+                    response.to_dict() if hasattr(response, "to_dict") else response
+                )
+
+                return self._parse_deepgram_response(response_dict)
+
+            except Exception as e:
+                raise ASRError(f"Deepgram transcription error: {e}")
+
+        async def create_stream_output(
+            self,
+            model: str,
+            file: Union[str, BinaryIO],
+            options: Optional[TranscriptionOptions] = None,
+            **kwargs,
+        ) -> AsyncGenerator[StreamingTranscriptionChunk, None]:
+            """Create streaming audio transcription using Deepgram SDK."""
+            try:
+                from deepgram import LiveOptions
+
+                api_params = self._prepare_api_params(model, options, kwargs)
+                live_options = LiveOptions(**api_params)
+                connection = self.client.listen.websocket.v("1")
+
+                transcript_queue = asyncio.Queue()
+                finished_event = asyncio.Event()
+
+                def on_message(self, result, **kwargs):
+                    sentence = result.channel.alternatives[0].transcript
+                    if sentence:
+                        chunk = StreamingTranscriptionChunk(
+                            text=sentence,
+                            is_final=result.is_final,
+                            confidence=getattr(
+                                result.channel.alternatives[0], "confidence", None
+                            ),
+                        )
+                        asyncio.create_task(transcript_queue.put(chunk))
+
+                def on_error(self, error, **kwargs):
+                    asyncio.create_task(
+                        transcript_queue.put(
+                            ASRError(f"Deepgram streaming error: {error}")
+                        )
+                    )
+                    finished_event.set()
+
+                def on_close(self, close, **kwargs):
+                    finished_event.set()
+
+                connection.on(connection.event.TRANSCRIPT_RECEIVED, on_message)
+                connection.on(connection.event.ERROR, on_error)
+                connection.on(connection.event.CLOSE, on_close)
+
+                if not connection.start(live_options):
+                    raise ASRError("Failed to start Deepgram streaming connection")
+
+                audio_data = self._read_audio_data(file)
+                await self._send_audio_chunks(connection, audio_data)
+                connection.finish()
+
+                async for chunk in self._yield_transcription_chunks(
+                    transcript_queue, finished_event
+                ):
+                    yield chunk
+
+            except Exception as e:
+                raise ASRError(f"Deepgram streaming transcription error: {e}")
+
+        def _extract_model_name(self, model: str) -> str:
+            """Use model name directly (client already extracted it)."""
+            return model
+
+        def _prepare_api_params(
+            self, model: str, options: Optional[TranscriptionOptions], kwargs: dict
+        ) -> dict:
+            """Prepare API parameters for Deepgram."""
+            if options is not None:
+                api_params = ParameterMapper.map_to_deepgram(options)
+            else:
+                api_params = self._map_openai_to_deepgram_params(kwargs)
+
+            model_name = self._extract_model_name(model)
+            api_params.setdefault("smart_format", True)
+            api_params.setdefault("punctuate", True)
+            api_params.setdefault("language", "en")
+            api_params["model"] = model_name
+            return api_params
+
+        def _prepare_audio_payload(self, file: Union[str, BinaryIO]) -> dict:
+            """Prepare audio payload for Deepgram API."""
             if isinstance(file, str):
                 with open(file, "rb") as audio_file:
-                    audio_data = audio_file.read()
+                    buffer_data = audio_file.read()
             else:
-                # Assume it's a file-like object
-                audio_data = file.read()
+                if hasattr(file, "read"):
+                    buffer_data = file.read()
+                else:
+                    raise ValueError(
+                        "File must be a file path string or file-like object"
+                    )
+            return {"buffer": buffer_data}
 
-            # Make API request
-            response = requests.post(
-                self.base_url,
-                headers=headers,
-                params=params,
-                data=audio_data,
-                timeout=60,
-            )
+        def _read_audio_data(self, file: Union[str, BinaryIO]) -> bytes:
+            """Read audio data from file or file-like object."""
+            if isinstance(file, str):
+                with open(file, "rb") as audio_file:
+                    return audio_file.read()
+            else:
+                return file.read()
 
-            if response.status_code != 200:
-                raise ASRError(
-                    f"Deepgram API error: {response.status_code} - {response.text}"
-                )
+        async def _send_audio_chunks(self, connection, audio_data: bytes) -> None:
+            """Send audio data in chunks to Deepgram connection."""
+            chunk_size = 8192
+            for i in range(0, len(audio_data), chunk_size):
+                chunk = audio_data[i : i + chunk_size]
+                connection.send(chunk)
+                await asyncio.sleep(0.01)
 
-            response_data = response.json()
-            return self._parse_deepgram_response(response_data)
+        async def _yield_transcription_chunks(
+            self, transcript_queue: asyncio.Queue, finished_event: asyncio.Event
+        ) -> AsyncGenerator[StreamingTranscriptionChunk, None]:
+            """Yield transcription chunks as they arrive."""
+            while not finished_event.is_set():
+                try:
+                    chunk = await asyncio.wait_for(transcript_queue.get(), timeout=1.0)
+                    if isinstance(chunk, Exception):
+                        raise chunk
+                    yield chunk
+                except asyncio.TimeoutError:
+                    continue
 
-        except requests.RequestException as e:
-            raise ASRError(f"Deepgram API request error: {e}")
-        except Exception as e:
-            raise ASRError(f"Deepgram transcription error: {e}")
+        def _map_openai_to_deepgram_params(self, openai_params: dict) -> dict:
+            """Map OpenAI-style parameters to Deepgram parameters."""
+            deepgram_params = {}
 
-    def _parse_deepgram_response(self, response_data: dict) -> TranscriptionResult:
-        """Convert Deepgram API response to unified TranscriptionResult."""
-        try:
-            # Extract the main transcript
-            results = response_data.get("results", {})
-            channels_data = results.get("channels", [])
+            if "language" in openai_params:
+                deepgram_params["language"] = openai_params["language"]
+            if "prompt" in openai_params:
+                deepgram_params["keywords"] = openai_params["prompt"]
+            if "timestamp_granularities" in openai_params:
+                granularities = openai_params["timestamp_granularities"]
+                if "word" in granularities:
+                    deepgram_params["punctuate"] = True
+                    deepgram_params["utterances"] = True
 
-            if not channels_data:
-                return TranscriptionResult(text="", language=None)
+            return deepgram_params
 
-            # Get the first channel
-            channel_data = channels_data[0]
-            alternatives_data = channel_data.get("alternatives", [])
+        def _parse_deepgram_response(self, response_dict: dict) -> TranscriptionResult:
+            """Convert Deepgram API response to unified TranscriptionResult."""
+            try:
+                results = response_dict.get("results", {})
+                channels = results.get("channels", [])
 
-            if not alternatives_data:
-                return TranscriptionResult(text="", language=None)
-
-            # Get the best alternative
-            best_alternative = alternatives_data[0]
-            text = best_alternative.get("transcript", "")
-            overall_confidence = best_alternative.get("confidence", None)
-
-            # Extract language if available
-            language = results.get("language", None)
-
-            # Parse segments/paragraphs if available
-            segments = []
-            words = []
-
-            # Handle paragraphs (segments)
-            paragraphs = best_alternative.get("paragraphs", {})
-            if paragraphs and "paragraphs" in paragraphs:
-                for i, paragraph in enumerate(paragraphs["paragraphs"]):
-                    segments.append(
-                        Segment(
-                            id=i,
-                            seek=0,  # Deepgram doesn't provide seek
-                            start=paragraph.get("start", 0.0),
-                            end=paragraph.get("end", 0.0),
-                            text=paragraph.get("text", ""),
-                            confidence=paragraph.get("confidence", None),
-                        )
+                if not channels or not channels[0].get("alternatives"):
+                    return TranscriptionResult(
+                        text="", language=None, confidence=None, task="transcribe"
                     )
 
-            # Handle words if available with enhanced fields
-            deepgram_words = best_alternative.get("words", [])
-            for word_data in deepgram_words:
-                words.append(
+                best_alternative = channels[0]["alternatives"][0]
+                text = best_alternative.get("transcript", "")
+                confidence = best_alternative.get("confidence", None)
+
+                words = [
                     Word(
                         word=word_data.get("word", ""),
-                        start=word_data.get("start", 0.0),
-                        end=word_data.get("end", 0.0),
+                        start=word_data.get("start", None),
+                        end=word_data.get("end", None),
                         confidence=word_data.get("confidence", None),
-                        speaker=word_data.get("speaker", None),
-                        speaker_confidence=word_data.get("speaker_confidence", None),
-                        punctuated_word=word_data.get("punctuated_word", None),
                     )
-                )
+                    for word_data in best_alternative.get("words", [])
+                ]
 
-            # Build alternatives list for full Deepgram compatibility
-            alternatives = []
-            for alt_data in alternatives_data:
-                alt_words = []
-                for word_data in alt_data.get("words", []):
-                    alt_words.append(
-                        Word(
-                            word=word_data.get("word", ""),
-                            start=word_data.get("start", 0.0),
-                            end=word_data.get("end", 0.0),
-                            confidence=word_data.get("confidence", None),
-                            speaker=word_data.get("speaker", None),
+                segments = []
+                paragraphs = results.get("paragraphs", {}).get("paragraphs", [])
+                for para in paragraphs:
+                    for sentence in para.get("sentences", []):
+                        segments.append(
+                            Segment(
+                                id=len(segments),
+                                seek=0,
+                                start=sentence.get("start", None),
+                                end=sentence.get("end", None),
+                                text=sentence.get("text", ""),
+                                tokens=[],
+                                temperature=0.0,
+                                avg_logprob=0.0,
+                                compression_ratio=0.0,
+                                no_speech_prob=0.0,
+                            )
                         )
-                    )
 
-                alternatives.append(
+                alternatives_list = [
                     Alternative(
-                        transcript=alt_data.get("transcript", ""),
-                        confidence=alt_data.get("confidence", None),
-                        words=alt_words if alt_words else None,
+                        transcript=alt.get("transcript", ""),
+                        confidence=alt.get("confidence", None),
                     )
-                )
+                    for alt in channels[0]["alternatives"][1:]
+                ]
 
-            # Build channels list
-            channels = []
-            for chan_data in channels_data:
-                chan_alternatives = []
-                for alt_data in chan_data.get("alternatives", []):
-                    chan_alternatives.append(
-                        Alternative(
-                            transcript=alt_data.get("transcript", ""),
-                            confidence=alt_data.get("confidence", None),
-                        )
-                    )
-
-                channels.append(
+                channels_list = [
                     Channel(
-                        alternatives=chan_alternatives,
-                        search=chan_data.get("search", None),
+                        alternatives=[
+                            Alternative(
+                                transcript=alt.get("transcript", ""),
+                                confidence=alt.get("confidence", None),
+                            )
+                            for alt in channel.get("alternatives", [])
+                        ]
                     )
+                    for channel in channels
+                ]
+
+                metadata = response_dict.get("metadata", {})
+
+                return TranscriptionResult(
+                    text=text,
+                    language=results.get("language", None),
+                    confidence=confidence,
+                    task="transcribe",
+                    duration=metadata.get("duration", None) if metadata else None,
+                    segments=segments or None,
+                    words=words or None,
+                    channels=channels_list or None,
+                    alternatives=alternatives_list or None,
+                    utterances=results.get("utterances", []),
+                    paragraphs=results.get("paragraphs", None),
+                    topics=results.get("topics", []),
+                    intents=results.get("intents", []),
+                    sentiment=results.get("sentiment", None),
+                    summary=results.get("summary", None),
+                    metadata=metadata,
                 )
 
-            # Extract advanced features if available
-            metadata = response_data.get("metadata", None)
-            utterances = best_alternative.get("utterances", None)
-            # Convert paragraphs dict to list format for TranscriptionResult
-            paragraphs_data = paragraphs.get("paragraphs", []) if paragraphs else None
-            topics = results.get("topics", None)
-            intents = results.get("intents", None)
-            sentiment = results.get("sentiment", None)
-            summary = results.get("summary", None)
-
-            return TranscriptionResult(
-                text=text,
-                language=language,
-                confidence=overall_confidence,
-                task="transcribe",  # Deepgram is always transcription
-                duration=metadata.get("duration", None) if metadata else None,
-                segments=segments if segments else None,
-                words=words if words else None,
-                channels=channels if channels else None,
-                alternatives=alternatives if alternatives else None,
-                utterances=utterances,
-                paragraphs=paragraphs_data,
-                topics=topics,
-                intents=intents,
-                sentiment=sentiment,
-                summary=summary,
-                metadata=metadata,
-            )
-
-        except (KeyError, TypeError, IndexError) as e:
-            raise ASRError(f"Error parsing Deepgram response: {e}")
+            except (KeyError, TypeError, IndexError) as e:
+                raise ASRError(f"Error parsing Deepgram response: {e}")

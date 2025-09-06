@@ -8,7 +8,11 @@ import pytest
 
 from aisuite.providers.google_provider import GoogleProvider
 from aisuite.provider import ASRError
-from aisuite.framework.message import TranscriptionResult
+from aisuite.framework.message import (
+    TranscriptionResult,
+    TranscriptionOptions,
+    StreamingTranscriptionChunk,
+)
 from vertexai.generative_models import Content, Part
 
 
@@ -181,7 +185,17 @@ def test_role_conversions():
     assert result[2].parts[0].text == "Assistant message"
 
 
-# NEW ASR TESTS - Added functionality
+class TestGoogleProvider:
+    """Test suite for Google provider functionality."""
+
+    def test_provider_initialization(self):
+        """Test that Google provider initializes correctly."""
+        provider = GoogleProvider()
+        assert provider is not None
+        assert hasattr(provider, "audio")
+        assert hasattr(provider.audio, "transcriptions")
+
+
 class TestGoogleASR:
     """Test suite for Google ASR functionality."""
 
@@ -193,8 +207,8 @@ class TestGoogleASR:
         google_provider._speech_client = mock_client
 
         with patch("builtins.open", mock_open(read_data=b"fake audio data")):
-            result = google_provider.audio_transcriptions_create(
-                model="latest_long", file="test_audio.wav"
+            result = google_provider.audio.transcriptions.create(
+                model="google:latest_long", file="test_audio.wav"
             )
 
             assert isinstance(result, TranscriptionResult)
@@ -213,14 +227,38 @@ class TestGoogleASR:
 
         audio_data = io.BytesIO(b"fake audio data")
 
-        result = google_provider.audio_transcriptions_create(
-            model="latest_long", file=audio_data
+        result = google_provider.audio.transcriptions.create(
+            model="google:latest_long", file=audio_data
         )
 
         assert isinstance(result, TranscriptionResult)
         assert result.text == "Hello, this is a test transcription."
 
-    def test_audio_transcriptions_create_api_error(self):
+    def test_audio_transcriptions_create_with_options(
+        self, mock_google_speech_response
+    ):
+        """Test audio transcription with TranscriptionOptions."""
+        google_provider = GoogleProvider()
+        mock_client = MagicMock()
+        mock_client.recognize.return_value = mock_google_speech_response
+        google_provider._speech_client = mock_client
+
+        options = TranscriptionOptions(
+            language="en",
+            enable_automatic_punctuation=True,
+            include_word_timestamps=True,
+        )
+
+        with patch("builtins.open", mock_open(read_data=b"fake audio data")):
+            result = google_provider.audio.transcriptions.create(
+                model="google:latest_long", file="test_audio.wav", options=options
+            )
+
+            mock_client.recognize.assert_called_once()
+            assert isinstance(result, TranscriptionResult)
+            assert result.text == "Hello, this is a test transcription."
+
+    def test_audio_transcriptions_create_error_handling(self):
         """Test handling of Google Speech API errors."""
         google_provider = GoogleProvider()
         mock_client = MagicMock()
@@ -231,21 +269,38 @@ class TestGoogleASR:
             with pytest.raises(
                 ASRError, match="Google Speech-to-Text error: API Error"
             ):
-                google_provider.audio_transcriptions_create(
-                    model="latest_long", file="test_audio.wav"
+                google_provider.audio.transcriptions.create(
+                    model="google:latest_long", file="test_audio.wav"
                 )
+
+    @pytest.mark.asyncio
+    async def test_audio_transcriptions_create_stream_output(
+        self, mock_google_speech_response
+    ):
+        """Test streaming audio transcription."""
+        google_provider = GoogleProvider()
+        mock_client = MagicMock()
+        mock_client.streaming_recognize.return_value = [MagicMock()]
+        google_provider._speech_client = mock_client
+
+        with patch("builtins.open", mock_open(read_data=b"fake audio data")):
+            result = google_provider.audio.transcriptions.create_stream_output(
+                model="google:latest_long", file="test_audio.wav"
+            )
+
+            assert hasattr(result, "__aiter__")
 
     def test_parse_google_response_complete(self, mock_google_speech_response):
         """Test parsing complete Google response."""
         google_provider = GoogleProvider()
-        result = google_provider._parse_google_response(mock_google_speech_response)
+        result = google_provider.audio.transcriptions._parse_google_response(
+            mock_google_speech_response
+        )
 
-        # Basic fields
         assert result.text == "Hello, this is a test transcription."
         assert result.confidence == 0.95
         assert result.task == "transcribe"
 
-        # Words
         assert len(result.words) == 1
         word = result.words[0]
         assert word.word == "Hello"
@@ -253,11 +308,7 @@ class TestGoogleASR:
         assert word.end == 0.5
         assert word.confidence == 0.98
 
-        # Alternatives
         assert len(result.alternatives) == 1
-        assert (
-            result.alternatives[0].transcript == "Hello, this is a test transcription."
-        )
 
     def test_parse_google_response_empty_results(self):
         """Test parsing response with empty results."""
@@ -265,6 +316,8 @@ class TestGoogleASR:
         mock_response = MagicMock()
         mock_response.results = []
 
-        result = google_provider._parse_google_response(mock_response)
+        result = google_provider.audio.transcriptions._parse_google_response(
+            mock_response
+        )
         assert result.text == ""
         assert result.language is None

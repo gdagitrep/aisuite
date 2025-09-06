@@ -185,36 +185,39 @@ class TestClientASR:
         assert hasattr(client, "audio")
         assert hasattr(client.audio, "transcriptions")
 
-    @patch(
-        "aisuite.providers.openai_provider.OpenaiProvider.audio_transcriptions_create"
-    )
-    def test_transcriptions_create_success(self, mock_transcribe, provider_configs):
+    @patch("aisuite.provider.ProviderFactory.create_provider")
+    def test_transcriptions_create_success(
+        self, mock_create_provider, provider_configs
+    ):
         """Test successful audio transcription with OpenAI."""
-        # Mock successful transcription
         mock_result = TranscriptionResult(
             text="Hello, this is a test transcription.",
             language="en",
             confidence=0.95,
             task="transcribe",
         )
-        mock_transcribe.return_value = mock_result
+
+        # Create a mock provider with audio support
+        mock_provider = Mock()
+        mock_provider.audio.transcriptions.create.return_value = mock_result
+        mock_create_provider.return_value = mock_provider
 
         client = Client()
         client.configure(provider_configs)
 
         audio_data = io.BytesIO(b"fake audio data")
         result = client.audio.transcriptions.create(
-            model="openai:whisper-1", file=audio_data
+            model="openai:whisper-1", file=audio_data, language="en"
         )
 
         assert isinstance(result, TranscriptionResult)
         assert result.text == "Hello, this is a test transcription."
-        mock_transcribe.assert_called_once()
+        mock_provider.audio.transcriptions.create.assert_called_once()
 
-    @patch(
-        "aisuite.providers.deepgram_provider.DeepgramProvider.audio_transcriptions_create"
-    )
-    def test_transcriptions_create_deepgram(self, mock_transcribe, provider_configs):
+    @patch("aisuite.provider.ProviderFactory.create_provider")
+    def test_transcriptions_create_deepgram(
+        self, mock_create_provider, provider_configs
+    ):
         """Test audio transcription with Deepgram provider."""
         mock_result = TranscriptionResult(
             text="Deepgram transcription result.",
@@ -222,18 +225,22 @@ class TestClientASR:
             confidence=0.92,
             task="transcribe",
         )
-        mock_transcribe.return_value = mock_result
+
+        # Create a mock provider with audio support
+        mock_provider = Mock()
+        mock_provider.audio.transcriptions.create.return_value = mock_result
+        mock_create_provider.return_value = mock_provider
 
         client = Client()
         client.configure(provider_configs)
 
         result = client.audio.transcriptions.create(
-            model="deepgram:nova-2", file="test_audio.wav"
+            model="deepgram:nova-2", file="test_audio.wav", language="en"
         )
 
         assert isinstance(result, TranscriptionResult)
         assert result.text == "Deepgram transcription result."
-        mock_transcribe.assert_called_once()
+        mock_provider.audio.transcriptions.create.assert_called_once()
 
     def test_transcriptions_invalid_model_format(self, provider_configs):
         """Test that invalid model format raises ValueError."""
@@ -241,14 +248,16 @@ class TestClientASR:
         client.configure(provider_configs)
 
         with pytest.raises(ValueError, match="Invalid model format"):
-            client.audio.transcriptions.create(model="invalid-format", file="test.wav")
+            client.audio.transcriptions.create(
+                model="invalid-format", file="test.wav", language="en"
+            )
 
     def test_transcriptions_unsupported_provider(self, provider_configs):
         """Test error handling for unsupported ASR provider."""
         client = Client()
         client.configure(provider_configs)
 
-        with pytest.raises(ValueError, match="Invalid provider key 'unsupported'"):
+        with pytest.raises(ValueError, match="is not available"):
             client.audio.transcriptions.create(
-                model="unsupported:model", file="test.wav"
+                model="unsupported:model", file="test.wav", language="en"
             )

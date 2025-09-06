@@ -3,7 +3,7 @@ from pathlib import Path
 import importlib
 import os
 import functools
-from typing import Union, BinaryIO
+from typing import Union, BinaryIO, Optional
 
 
 class LLMError(Exception):
@@ -21,21 +21,14 @@ class ASRError(Exception):
 
 
 class Provider(ABC):
+    def __init__(self):
+        """Initialize provider with optional audio functionality."""
+        self.audio: Optional[Audio] = None
+
     @abstractmethod
     def chat_completions_create(self, model, messages):
         """Abstract method for chat completion calls, to be implemented by each provider."""
         pass
-
-    def audio_transcriptions_create(
-        self, model: str, file: Union[str, BinaryIO], **kwargs
-    ):
-        """
-        Optional method for audio transcription calls.
-        Providers can implement this to support ASR functionality.
-        """
-        raise NotImplementedError(
-            f"Provider {self.__class__.__name__} does not support audio transcription."
-        )
 
 
 class ProviderFactory:
@@ -70,3 +63,35 @@ class ProviderFactory:
         """List all supported provider names based on files present in the providers directory."""
         provider_files = Path(cls.PROVIDERS_DIR).glob("*_provider.py")
         return {file.stem.replace("_provider", "") for file in provider_files}
+
+
+class Audio:
+    """Base class for all audio functionality."""
+
+    def __init__(self):
+        self.transcriptions: Optional["Audio.Transcription"] = None
+
+    class Transcription(ABC):
+        """Base class for audio transcription functionality."""
+
+        def create(
+            self,
+            model: str,
+            file: Union[str, BinaryIO],
+            options=None,
+            **kwargs,
+        ):
+            """Create audio transcription."""
+            raise NotImplementedError("Transcription not supported by this provider")
+
+        async def create_stream_output(
+            self,
+            model: str,
+            file: Union[str, BinaryIO],
+            options=None,
+            **kwargs,
+        ):
+            """Create streaming audio transcription."""
+            raise NotImplementedError(
+                "Streaming transcription not supported by this provider"
+            )
