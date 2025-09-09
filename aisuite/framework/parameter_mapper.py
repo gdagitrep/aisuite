@@ -19,6 +19,7 @@ class ParameterMapper:
         "temperature": "temperature",
         "prompt": "prompt",
         "stream": "stream",
+        "timestamp_granularities": "timestamp_granularities",
     }
 
     # Deepgram API parameter mapping
@@ -43,6 +44,7 @@ class ParameterMapper:
         "max_alternatives": "alternatives",
         "stream": "interim_results",
         "encoding": "encoding",
+        # timestamp_granularities is handled specially for Deepgram
     }
 
     # Google API parameter mapping
@@ -110,6 +112,16 @@ class ParameterMapper:
         if options.context_phrases:
             params["keywords"] = options.context_phrases
 
+        # Handle timestamp_granularities conversion for Deepgram
+        if (
+            hasattr(options, "timestamp_granularities")
+            and options.timestamp_granularities
+        ):
+            if "word" in options.timestamp_granularities:
+                params["utterances"] = True
+            if "segment" in options.timestamp_granularities:
+                params["paragraphs"] = True
+
         # Handle custom parameters
         cls._apply_custom_parameters(params, options.custom_parameters, "deepgram")
 
@@ -173,6 +185,14 @@ class ParameterMapper:
             params["encoding"] = encoding_map.get(
                 options.audio_format.lower(), "LINEAR16"
             )
+
+        # Handle timestamp_granularities conversion for Google
+        if (
+            hasattr(options, "timestamp_granularities")
+            and options.timestamp_granularities
+        ):
+            if "word" in options.timestamp_granularities:
+                params["enable_word_time_offsets"] = True
 
         # Handle custom parameters
         cls._apply_custom_parameters(params, options.custom_parameters, "google")

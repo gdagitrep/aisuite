@@ -158,29 +158,62 @@ class TestOpenAIASR:
     @pytest.mark.asyncio
     async def test_audio_transcriptions_create_stream_output(self, openai_provider):
         """Test streaming audio transcription."""
-        mock_chunk = MagicMock()
-        mock_chunk.text = "Hello"
-        mock_chunk.confidence = 0.95
+        # Mock streaming events
+        mock_delta_event = MagicMock()
+        mock_delta_event.type = "transcript.text.delta"
+        mock_delta_event.delta = "Hello"
+
+        mock_done_event = MagicMock()
+        mock_done_event.type = "transcript.text.done"
+        mock_done_event.text = "Hello world"
 
         with patch(
             "builtins.open", mock_open(read_data=b"fake audio data")
         ), patch.object(
             openai_provider.client.audio.transcriptions,
             "create",
-            return_value=[mock_chunk],
+            return_value=[mock_delta_event, mock_done_event],
         ):
             result = openai_provider.audio.transcriptions.create_stream_output(
-                model="openai:whisper-1", file="test_audio.mp3"
+                model="openai:gpt-4o-mini-transcribe", file="test_audio.mp3"
             )
 
             chunks = []
             async for chunk in result:
                 chunks.append(chunk)
-                break
 
-            assert len(chunks) == 1
+            assert len(chunks) == 2
             assert isinstance(chunks[0], StreamingTranscriptionChunk)
             assert chunks[0].text == "Hello"
+            assert chunks[0].is_final is False  # Delta event
+
+            assert isinstance(chunks[1], StreamingTranscriptionChunk)
+            assert chunks[1].text == "Hello world"
+            assert chunks[1].is_final is True  # Done event
+
+    @pytest.mark.asyncio
+    async def test_timestamp_granularities_error_handling(self, openai_provider):
+        """Test error handling for timestamp_granularities with incompatible response_format."""
+        options = TranscriptionOptions(
+            response_format="json",
+            stream=True,
+            timestamp_granularities=["word"],  # Now part of TranscriptionOptions
+        )
+
+        with patch("builtins.open", mock_open(read_data=b"fake audio data")):
+            with pytest.raises(
+                ASRError,
+                match="timestamp_granularities requires response_format='verbose_json'",
+            ):
+                # The error should be raised before making the API call
+                result = openai_provider.audio.transcriptions.create_stream_output(
+                    model="openai:gpt-4o-mini-transcribe",
+                    file="test_audio.mp3",
+                    options=options,
+                )
+                # Consume the async generator to trigger the validation
+                async for _ in result:
+                    pass
 
     def test_parse_openai_response_with_segments_and_words(self, openai_provider):
         """Test parsing OpenAI response with segments and words."""

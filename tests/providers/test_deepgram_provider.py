@@ -153,23 +153,29 @@ class TestDeepgramProvider:
 
     @pytest.mark.asyncio
     async def test_audio_transcriptions_create_stream_output(self, deepgram_provider):
-        """Test streaming audio transcription."""
+        """Test streaming audio transcription with single connection and chunking."""
         mock_connection = MagicMock()
         mock_connection.start.return_value = True
 
+        # Mock audio file data (simulate 16kHz mono audio)
+        audio_samples = 48000  # 3 seconds of 16kHz audio
+        mock_audio_data = b"\x00\x01" * audio_samples  # Fake PCM16 data
+
         with patch(
-            "builtins.open", mock_open(read_data=b"fake audio data")
+            "soundfile.read", return_value=(mock_audio_data, 16000)
         ), patch.object(
             deepgram_provider.client.listen.websocket,
             "v",
             return_value=mock_connection,
         ), patch(
-            "asyncio.Queue"
+            "queue.Queue"
         ), patch(
-            "asyncio.Event"
+            "threading.Event"
         ):
             result = deepgram_provider.audio.transcriptions.create_stream_output(
-                model="deepgram:nova-2", file="test_audio.mp3"
+                model="deepgram:nova-2",
+                file="test_audio.mp3",
+                chunk_size_minutes=1.0,  # Test with smaller chunks
             )
 
             # Test that it returns an async generator

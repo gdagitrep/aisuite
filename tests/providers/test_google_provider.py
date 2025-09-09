@@ -277,10 +277,20 @@ class TestGoogleASR:
     async def test_audio_transcriptions_create_stream_output(
         self, mock_google_speech_response
     ):
-        """Test streaming audio transcription."""
+        """Test streaming audio transcription with fixed config parameter."""
         google_provider = GoogleProvider()
         mock_client = MagicMock()
-        mock_client.streaming_recognize.return_value = [MagicMock()]
+
+        # Mock streaming response
+        mock_streaming_response = MagicMock()
+        mock_streaming_result = MagicMock()
+        mock_alternative = MagicMock()
+        mock_alternative.transcript = "Hello streaming"
+        mock_streaming_result.alternatives = [mock_alternative]
+        mock_streaming_result.is_final = True
+        mock_streaming_response.results = [mock_streaming_result]
+
+        mock_client.streaming_recognize.return_value = [mock_streaming_response]
         google_provider._speech_client = mock_client
 
         with patch("builtins.open", mock_open(read_data=b"fake audio data")):
@@ -289,6 +299,18 @@ class TestGoogleASR:
             )
 
             assert hasattr(result, "__aiter__")
+
+            # Test that streaming_recognize is called with both config and requests
+            chunks = []
+            async for chunk in result:
+                chunks.append(chunk)
+                break  # Just test one chunk
+
+            # Verify the method was called with correct parameters
+            mock_client.streaming_recognize.assert_called_once()
+            call_args = mock_client.streaming_recognize.call_args
+            assert "config" in call_args.kwargs
+            assert "requests" in call_args.kwargs
 
     def test_parse_google_response_complete(self, mock_google_speech_response):
         """Test parsing complete Google response."""

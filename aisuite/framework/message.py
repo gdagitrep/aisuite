@@ -211,6 +211,7 @@ class TranscriptionOptions:
     response_format: Optional[str] = None
     include_word_timestamps: Optional[bool] = None
     include_segment_timestamps: Optional[bool] = None
+    timestamp_granularities: Optional[List[str]] = None  # OpenAI: ["word", "segment"]
 
     # Context and guidance
     prompt: Optional[str] = None

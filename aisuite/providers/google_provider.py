@@ -398,7 +398,7 @@ class GoogleAudio(Audio):
                 )
 
                 responses = self.provider.speech_client.streaming_recognize(
-                    requests=request_generator
+                    config=streaming_config, requests=request_generator
                 )
 
                 for response in responses:
@@ -498,10 +498,6 @@ class GoogleAudio(Audio):
             """Create streaming requests generator for Google Speech API."""
 
             def request_generator():
-                yield speech.StreamingRecognizeRequest(
-                    streaming_config=streaming_config
-                )
-
                 chunk_size = 8192
                 for i in range(0, len(audio_data), chunk_size):
                     chunk = audio_data[i : i + chunk_size]
