@@ -215,7 +215,9 @@ For more detailed examples of tool calling, check out the `examples/tool_calling
 
 ## Audio Speech Recognition (ASR)
 
-`aisuite` supports Audio Speech Recognition (ASR) with the same unified interface pattern:
+> **Note:** ASR support is currently under development. The API and features described below are subject to change.
+
+`aisuite` is adding Audio Speech Recognition (ASR) with the same unified interface pattern:
 
 ```python
 import aisuite as ai
@@ -224,22 +226,21 @@ client = ai.Client()
 # Basic transcription
 result = client.audio.transcriptions.create(
     model="openai:whisper-1",
-    file="speech.mp3"
+    file="speech.mp3",
+    language="en"
 )
 print(result.text)
 
-# Provider-specific features
+# Works with other providers
 result = client.audio.transcriptions.create(
-    model="deepgram:nova-2", 
+    model="deepgram:nova-2",
     file="meeting.mp3",
-    diarize=True,           # Speaker separation
-    word_confidence=True    # Word-level confidence
+    punctuate=True
 )
+print(result.text)
 ```
 
-**Supported providers:** OpenAI, Deepgram, Google.
-
-**Key features:** Same `provider:model` format • Rich metadata (timestamps, confidence, speakers) • Provider-specific advanced features
+**Providers in development:** OpenAI, Deepgram, Google.
 
 ## License
 
