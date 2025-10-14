@@ -137,7 +137,10 @@ class TestOpenAIASR:
 
             mock_create.assert_called_once()
             call_kwargs = mock_create.call_args.kwargs
-            assert "language" in call_kwargs
+            # Check that options parameters were extracted and passed as flat kwargs
+            assert call_kwargs["language"] == "en"
+            assert call_kwargs["include_word_timestamps"] is True
+            assert call_kwargs["enable_automatic_punctuation"] is True
             assert isinstance(result, TranscriptionResult)
             assert result.text == "Hello, this is a test transcription."
 

@@ -257,7 +257,7 @@ class TestClientASR:
         client = Client()
         client.configure(provider_configs)
 
-        with pytest.raises(ValueError, match="is not available"):
+        with pytest.raises(ValueError, match="Invalid provider key"):
             client.audio.transcriptions.create(
                 model="unsupported:model", file="test.wav", language="en"
             )

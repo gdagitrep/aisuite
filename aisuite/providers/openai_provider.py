@@ -78,6 +78,15 @@ class OpenAIAudio(Audio):
             This is a simple pass-through to the OpenAI API.
             """
             try:
+                # Handle TranscriptionOptions object if passed
+                if "options" in kwargs:
+                    options = kwargs.pop("options")
+                    # Extract all non-None attributes from options object
+                    if hasattr(options, "__dict__"):
+                        for key, value in options.__dict__.items():
+                            if value is not None and key not in kwargs:
+                                kwargs[key] = value
+
                 # Handle timestamp_granularities requirement
                 if "timestamp_granularities" in kwargs:
                     # OpenAI requires verbose_json format for timestamp_granularities
@@ -112,6 +121,15 @@ class OpenAIAudio(Audio):
             This is a simple pass-through to the OpenAI API with streaming enabled.
             """
             try:
+                # Handle TranscriptionOptions object if passed
+                if "options" in kwargs:
+                    options = kwargs.pop("options")
+                    # Extract all non-None attributes from options object
+                    if hasattr(options, "__dict__"):
+                        for key, value in options.__dict__.items():
+                            if value is not None and key not in kwargs:
+                                kwargs[key] = value
+
                 # Enable streaming
                 kwargs["stream"] = True
 

@@ -85,9 +85,13 @@ class TestDeepgramProvider:
         """Test successful audio transcription."""
         mock_sdk_response = MagicMock()
         mock_sdk_response.to_dict.return_value = mock_deepgram_response
+        mock_sdk_response.model_dump.return_value = mock_deepgram_response
 
-        with patch("builtins.open", mock_open(read_data=b"fake audio data")), patch(
-            "deepgram.clients.listen.v1.rest.client.ListenRESTClient.transcribe_file",
+        with patch(
+            "builtins.open", mock_open(read_data=b"fake audio data")
+        ), patch.object(
+            deepgram_provider.client.listen.v1.media,
+            "transcribe_file",
             return_value=mock_sdk_response,
         ):
             result = deepgram_provider.audio.transcriptions.create(
@@ -105,9 +109,14 @@ class TestDeepgramProvider:
         """Test audio transcription with file-like object."""
         audio_data = io.BytesIO(b"fake audio data")
 
-        with patch(
-            "deepgram.clients.listen.v1.rest.client.ListenRESTClient.transcribe_file",
-            return_value=MagicMock(to_dict=lambda: mock_deepgram_response),
+        mock_response = MagicMock()
+        mock_response.to_dict.return_value = mock_deepgram_response
+        mock_response.model_dump.return_value = mock_deepgram_response
+
+        with patch.object(
+            deepgram_provider.client.listen.v1.media,
+            "transcribe_file",
+            return_value=mock_response,
         ):
             result = deepgram_provider.audio.transcriptions.create(
                 model="deepgram:nova-2", file=audio_data
@@ -126,9 +135,16 @@ class TestDeepgramProvider:
             enable_automatic_punctuation=True,
         )
 
-        with patch("builtins.open", mock_open(read_data=b"fake audio data")), patch(
-            "deepgram.clients.listen.v1.rest.client.ListenRESTClient.transcribe_file",
-            return_value=MagicMock(to_dict=lambda: mock_deepgram_response),
+        mock_response = MagicMock()
+        mock_response.to_dict.return_value = mock_deepgram_response
+        mock_response.model_dump.return_value = mock_deepgram_response
+
+        with patch(
+            "builtins.open", mock_open(read_data=b"fake audio data")
+        ), patch.object(
+            deepgram_provider.client.listen.v1.media,
+            "transcribe_file",
+            return_value=mock_response,
         ) as mock_transcribe:
             result = deepgram_provider.audio.transcriptions.create(
                 model="deepgram:nova-2", file="test_audio.mp3", options=options
@@ -140,8 +156,11 @@ class TestDeepgramProvider:
 
     def test_audio_transcriptions_create_error_handling(self, deepgram_provider):
         """Test error handling for API failures."""
-        with patch("builtins.open", mock_open(read_data=b"fake audio data")), patch(
-            "deepgram.clients.listen.v1.rest.client.ListenRESTClient.transcribe_file",
+        with patch(
+            "builtins.open", mock_open(read_data=b"fake audio data")
+        ), patch.object(
+            deepgram_provider.client.listen.v1.media,
+            "transcribe_file",
             side_effect=Exception("API Error"),
         ):
             with pytest.raises(
@@ -154,23 +173,34 @@ class TestDeepgramProvider:
     @pytest.mark.asyncio
     async def test_audio_transcriptions_create_stream_output(self, deepgram_provider):
         """Test streaming audio transcription with single connection and chunking."""
-        mock_connection = MagicMock()
-        mock_connection.start.return_value = True
+        import numpy as np
 
         # Mock audio file data (simulate 16kHz mono audio)
         audio_samples = 48000  # 3 seconds of 16kHz audio
-        mock_audio_data = b"\x00\x01" * audio_samples  # Fake PCM16 data
+        mock_audio_data = np.zeros(audio_samples, dtype=np.float32)
+
+        # Create async context manager mock for v5 API
+        mock_connection = MagicMock()
+        mock_connection.send = MagicMock()
+        mock_connection.on = MagicMock()
+
+        async def mock_connect(*args, **kwargs):
+            # Return an async context manager
+            class MockAsyncContextManager:
+                async def __aenter__(self):
+                    return mock_connection
+
+                async def __aexit__(self, *args):
+                    pass
+
+            return MockAsyncContextManager()
 
         with patch(
             "soundfile.read", return_value=(mock_audio_data, 16000)
         ), patch.object(
-            deepgram_provider.client.listen.websocket,
-            "v",
-            return_value=mock_connection,
-        ), patch(
-            "queue.Queue"
-        ), patch(
-            "threading.Event"
+            deepgram_provider.client.listen.v1,
+            "connect",
+            side_effect=mock_connect,
         ):
             result = deepgram_provider.audio.transcriptions.create_stream_output(
                 model="deepgram:nova-2",
