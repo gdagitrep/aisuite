@@ -105,7 +105,7 @@ def test_asr_portable_transcription(model_id: str):
         result = client.audio.transcriptions.create(
             model=model_id,
             file=audio_file_path,
-            language="en"  # Common param - should auto-map for each provider
+            language="en",  # Common param - should auto-map for each provider
         )
 
         # Verify result has text
@@ -120,7 +120,9 @@ def test_asr_portable_transcription(model_id: str):
         # Verify transcription contains expected content from tests/test-data/test_audio.mp3
         # Audio: "Why did the scarecrow win an award? Because he was outstanding in the field."
         expected_keywords = ["scarecrow", "award", "field"]
-        found_keywords = [kw for kw in expected_keywords if kw.lower() in result.text.lower()]
+        found_keywords = [
+            kw for kw in expected_keywords if kw.lower() in result.text.lower()
+        ]
         assert len(found_keywords) >= 2, (
             f"Model {model_id} transcription missing expected content. "
             f"Found {len(found_keywords)}/3 keywords. Text: '{result.text}'"
@@ -129,7 +131,9 @@ def test_asr_portable_transcription(model_id: str):
         # Optional: Check for language if available and returned by provider
         # Note: Some providers (e.g., Deepgram) only return language if detect_language=True
         if hasattr(result, "language") and result.language is not None:
-            assert isinstance(result.language, str), f"Model {model_id} returned invalid language type"
+            assert isinstance(
+                result.language, str
+            ), f"Model {model_id} returned invalid language type"
 
     except FileNotFoundError:
         pytest.skip(f"Test audio file not found for {model_id}. Skipping test.")

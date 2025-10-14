@@ -433,7 +433,6 @@ class GoogleAudio(Audio):
             except Exception as e:
                 raise ASRError(f"Google Speech-to-Text streaming error: {e}") from e
 
-
         def _read_audio_data(self, file: Union[str, BinaryIO]) -> bytes:
             """Read audio data from file or file-like object."""
             if isinstance(file, str):
@@ -500,7 +499,6 @@ class GoogleAudio(Audio):
                     yield speech.StreamingRecognizeRequest(audio_content=chunk)
 
             return request_generator()
-
 
         def _parse_google_response(self, response) -> TranscriptionResult:
             """Convert Google Speech-to-Text response to unified TranscriptionResult."""

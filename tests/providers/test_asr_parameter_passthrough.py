@@ -31,13 +31,12 @@ class TestOpenAIParameterPassthrough:
         mock_response.language = "en"
         mock_response.segments = None
 
-        with patch("builtins.open", mock_open(read_data=b"audio")), \
-             patch.object(provider.client.audio.transcriptions, "create", return_value=mock_response) as mock_create:
+        with patch("builtins.open", mock_open(read_data=b"audio")), patch.object(
+            provider.client.audio.transcriptions, "create", return_value=mock_response
+        ) as mock_create:
 
             provider.audio.transcriptions.create(
-                model="whisper-1",
-                file="test.mp3",
-                language="en"
+                model="whisper-1", file="test.mp3", language="en"
             )
 
             # Verify language was passed to SDK
@@ -54,13 +53,12 @@ class TestOpenAIParameterPassthrough:
         mock_response.language = "en"
         mock_response.segments = None
 
-        with patch("builtins.open", mock_open(read_data=b"audio")), \
-             patch.object(provider.client.audio.transcriptions, "create", return_value=mock_response) as mock_create:
+        with patch("builtins.open", mock_open(read_data=b"audio")), patch.object(
+            provider.client.audio.transcriptions, "create", return_value=mock_response
+        ) as mock_create:
 
             provider.audio.transcriptions.create(
-                model="whisper-1",
-                file="test.mp3",
-                temperature=0.7
+                model="whisper-1", file="test.mp3", temperature=0.7
             )
 
             call_kwargs = mock_create.call_args.kwargs
@@ -75,13 +73,12 @@ class TestOpenAIParameterPassthrough:
         mock_response.language = "en"
         mock_response.segments = None
 
-        with patch("builtins.open", mock_open(read_data=b"audio")), \
-             patch.object(provider.client.audio.transcriptions, "create", return_value=mock_response) as mock_create:
+        with patch("builtins.open", mock_open(read_data=b"audio")), patch.object(
+            provider.client.audio.transcriptions, "create", return_value=mock_response
+        ) as mock_create:
 
             provider.audio.transcriptions.create(
-                model="whisper-1",
-                file="test.mp3",
-                response_format="verbose_json"
+                model="whisper-1", file="test.mp3", response_format="verbose_json"
             )
 
             call_kwargs = mock_create.call_args.kwargs
@@ -96,15 +93,16 @@ class TestOpenAIParameterPassthrough:
         mock_response.language = "en"
         mock_response.segments = None
 
-        with patch("builtins.open", mock_open(read_data=b"audio")), \
-             patch.object(provider.client.audio.transcriptions, "create", return_value=mock_response) as mock_create:
+        with patch("builtins.open", mock_open(read_data=b"audio")), patch.object(
+            provider.client.audio.transcriptions, "create", return_value=mock_response
+        ) as mock_create:
 
             provider.audio.transcriptions.create(
                 model="whisper-1",
                 file="test.mp3",
                 language="en",
                 temperature=0.5,
-                response_format="json"
+                response_format="json",
             )
 
             call_kwargs = mock_create.call_args.kwargs
@@ -122,12 +120,12 @@ class TestOpenAIParameterPassthrough:
 
         audio_data = io.BytesIO(b"fake audio data")
 
-        with patch.object(provider.client.audio.transcriptions, "create", return_value=mock_response) as mock_create:
+        with patch.object(
+            provider.client.audio.transcriptions, "create", return_value=mock_response
+        ) as mock_create:
 
             provider.audio.transcriptions.create(
-                model="whisper-1",
-                file=audio_data,
-                language="en"
+                model="whisper-1", file=audio_data, language="en"
             )
 
             call_kwargs = mock_create.call_args.kwargs
@@ -138,7 +136,7 @@ class TestOpenAIParameterPassthrough:
 class TestGoogleParameterPassthrough:
     """Test that parameters correctly reach Google Speech SDK."""
 
-    @patch('aisuite.providers.google_provider.vertexai.init')
+    @patch("aisuite.providers.google_provider.vertexai.init")
     def test_language_code_param_passthrough(self, mock_vertexai_init):
         """Test language_code parameter reaches Google SDK."""
         provider = GoogleProvider()
@@ -156,9 +154,7 @@ class TestGoogleParameterPassthrough:
 
         with patch("builtins.open", mock_open(read_data=b"audio")):
             provider.audio.transcriptions.create(
-                model="latest_long",
-                file="test.wav",
-                language_code="en-US"
+                model="latest_long", file="test.wav", language_code="en-US"
             )
 
             # Verify language_code was in the config passed to SDK
@@ -168,7 +164,7 @@ class TestGoogleParameterPassthrough:
             config = call_kwargs["config"]
             assert config.language_code == "en-US"
 
-    @patch('aisuite.providers.google_provider.vertexai.init')
+    @patch("aisuite.providers.google_provider.vertexai.init")
     def test_enable_automatic_punctuation_passthrough(self, mock_vertexai_init):
         """Test enable_automatic_punctuation parameter reaches Google SDK."""
         provider = GoogleProvider()
@@ -189,14 +185,14 @@ class TestGoogleParameterPassthrough:
                 model="latest_long",
                 file="test.wav",
                 language_code="en-US",
-                enable_automatic_punctuation=True
+                enable_automatic_punctuation=True,
             )
 
             call_kwargs = provider._speech_client.recognize.call_args.kwargs
             config = call_kwargs["config"]
             assert config.enable_automatic_punctuation is True
 
-    @patch('aisuite.providers.google_provider.vertexai.init')
+    @patch("aisuite.providers.google_provider.vertexai.init")
     def test_speech_contexts_passthrough(self, mock_vertexai_init):
         """Test speech_contexts parameter (from prompt mapping) reaches Google SDK."""
         provider = GoogleProvider()
@@ -218,11 +214,10 @@ class TestGoogleParameterPassthrough:
                 model="latest_long",
                 file="test.wav",
                 language_code="en-US",
-                speech_contexts=[{"phrases": ["technical terms"]}]
+                speech_contexts=[{"phrases": ["technical terms"]}],
             )
 
             call_kwargs = provider._speech_client.recognize.call_args.kwargs
             config = call_kwargs["config"]
             assert len(config.speech_contexts) == 1
             assert config.speech_contexts[0].phrases == ["technical terms"]
-

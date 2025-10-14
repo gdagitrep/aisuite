@@ -86,8 +86,9 @@ class TestParamValidatorTransformations:
 
         for input_lang, expected_output in test_cases.items():
             result = validator.validate_and_map("google", {"language": input_lang})
-            assert result == {"language_code": expected_output}, \
-                f"Failed for {input_lang}: expected {expected_output}, got {result}"
+            assert result == {
+                "language_code": expected_output
+            }, f"Failed for {input_lang}: expected {expected_output}, got {result}"
 
     def test_google_language_expansion_unknown_code(self):
         """Test Google language code expansion for unknown 2-letter code (fallback to -US)."""
@@ -111,13 +112,17 @@ class TestParamValidatorTransformations:
     def test_deepgram_prompt_to_keywords_multiple_words(self):
         """Test Deepgram prompt splits multiple words into list."""
         validator = ParamValidator("strict")
-        result = validator.validate_and_map("deepgram", {"prompt": "meeting notes action items"})
+        result = validator.validate_and_map(
+            "deepgram", {"prompt": "meeting notes action items"}
+        )
         assert result == {"keywords": ["meeting", "notes", "action", "items"]}
 
     def test_deepgram_prompt_to_keywords_already_list(self):
         """Test Deepgram handles prompt that's already a list."""
         validator = ParamValidator("strict")
-        result = validator.validate_and_map("deepgram", {"prompt": ["meeting", "notes"]})
+        result = validator.validate_and_map(
+            "deepgram", {"prompt": ["meeting", "notes"]}
+        )
         assert result == {"keywords": ["meeting", "notes"]}
 
     def test_google_prompt_to_speech_contexts(self):
@@ -133,13 +138,17 @@ class TestParamValidatorProviderSpecific:
     def test_openai_response_format(self):
         """Test OpenAI response_format param passes through."""
         validator = ParamValidator("strict")
-        result = validator.validate_and_map("openai", {"response_format": "verbose_json"})
+        result = validator.validate_and_map(
+            "openai", {"response_format": "verbose_json"}
+        )
         assert result == {"response_format": "verbose_json"}
 
     def test_openai_timestamp_granularities(self):
         """Test OpenAI timestamp_granularities param passes through."""
         validator = ParamValidator("strict")
-        result = validator.validate_and_map("openai", {"timestamp_granularities": ["word", "segment"]})
+        result = validator.validate_and_map(
+            "openai", {"timestamp_granularities": ["word", "segment"]}
+        )
         assert result == {"timestamp_granularities": ["word", "segment"]}
 
     def test_deepgram_punctuate(self):
@@ -157,12 +166,15 @@ class TestParamValidatorProviderSpecific:
     def test_deepgram_multiple_features(self):
         """Test Deepgram multiple features pass through together."""
         validator = ParamValidator("strict")
-        result = validator.validate_and_map("deepgram", {
-            "punctuate": True,
-            "diarize": True,
-            "sentiment": True,
-            "topics": True,
-        })
+        result = validator.validate_and_map(
+            "deepgram",
+            {
+                "punctuate": True,
+                "diarize": True,
+                "sentiment": True,
+                "topics": True,
+            },
+        )
         assert result == {
             "punctuate": True,
             "diarize": True,
@@ -173,13 +185,17 @@ class TestParamValidatorProviderSpecific:
     def test_google_enable_automatic_punctuation(self):
         """Test Google enable_automatic_punctuation param passes through."""
         validator = ParamValidator("strict")
-        result = validator.validate_and_map("google", {"enable_automatic_punctuation": True})
+        result = validator.validate_and_map(
+            "google", {"enable_automatic_punctuation": True}
+        )
         assert result == {"enable_automatic_punctuation": True}
 
     def test_google_enable_speaker_diarization(self):
         """Test Google enable_speaker_diarization param passes through."""
         validator = ParamValidator("strict")
-        result = validator.validate_and_map("google", {"enable_speaker_diarization": True})
+        result = validator.validate_and_map(
+            "google", {"enable_speaker_diarization": True}
+        )
         assert result == {"enable_speaker_diarization": True}
 
     def test_google_diarization_speaker_count(self):
@@ -195,11 +211,14 @@ class TestParamValidatorMixedParams:
     def test_openai_common_and_specific(self):
         """Test OpenAI with common params + provider-specific params."""
         validator = ParamValidator("strict")
-        result = validator.validate_and_map("openai", {
-            "language": "en",
-            "temperature": 0.5,
-            "response_format": "verbose_json",
-        })
+        result = validator.validate_and_map(
+            "openai",
+            {
+                "language": "en",
+                "temperature": 0.5,
+                "response_format": "verbose_json",
+            },
+        )
         assert result == {
             "language": "en",
             "temperature": 0.5,
@@ -209,12 +228,15 @@ class TestParamValidatorMixedParams:
     def test_deepgram_common_and_specific(self):
         """Test Deepgram with common params + provider-specific params."""
         validator = ParamValidator("strict")
-        result = validator.validate_and_map("deepgram", {
-            "language": "en",
-            "prompt": "meeting",
-            "punctuate": True,
-            "diarize": True,
-        })
+        result = validator.validate_and_map(
+            "deepgram",
+            {
+                "language": "en",
+                "prompt": "meeting",
+                "punctuate": True,
+                "diarize": True,
+            },
+        )
         assert result == {
             "language": "en",
             "keywords": ["meeting"],
@@ -225,11 +247,14 @@ class TestParamValidatorMixedParams:
     def test_google_common_and_specific(self):
         """Test Google with common params + provider-specific params."""
         validator = ParamValidator("strict")
-        result = validator.validate_and_map("google", {
-            "language": "en",
-            "enable_automatic_punctuation": True,
-            "enable_speaker_diarization": True,
-        })
+        result = validator.validate_and_map(
+            "google",
+            {
+                "language": "en",
+                "enable_automatic_punctuation": True,
+                "enable_speaker_diarization": True,
+            },
+        )
         assert result == {
             "language_code": "en-US",
             "enable_automatic_punctuation": True,
@@ -243,23 +268,30 @@ class TestParamValidatorStrictMode:
     def test_strict_mode_rejects_unknown_param_openai(self):
         """Test strict mode raises ValueError for unknown OpenAI param."""
         validator = ParamValidator("strict")
-        with pytest.raises(ValueError, match="Unknown parameters for openai: \\['invalid_param'\\]"):
+        with pytest.raises(
+            ValueError, match="Unknown parameters for openai: \\['invalid_param'\\]"
+        ):
             validator.validate_and_map("openai", {"invalid_param": True})
 
     def test_strict_mode_rejects_unknown_param_deepgram(self):
         """Test strict mode raises ValueError for unknown Deepgram param."""
         validator = ParamValidator("strict")
-        with pytest.raises(ValueError, match="Unknown parameters for deepgram: \\['invalid_param'\\]"):
+        with pytest.raises(
+            ValueError, match="Unknown parameters for deepgram: \\['invalid_param'\\]"
+        ):
             validator.validate_and_map("deepgram", {"invalid_param": True})
 
     def test_strict_mode_rejects_multiple_unknown_params(self):
         """Test strict mode raises ValueError for multiple unknown params."""
         validator = ParamValidator("strict")
         with pytest.raises(ValueError, match="Unknown parameters for openai"):
-            validator.validate_and_map("openai", {
-                "invalid_param1": True,
-                "invalid_param2": False,
-            })
+            validator.validate_and_map(
+                "openai",
+                {
+                    "invalid_param1": True,
+                    "invalid_param2": False,
+                },
+            )
 
     def test_strict_mode_error_message_helpful(self):
         """Test that strict mode error message mentions provider documentation."""
@@ -271,10 +303,13 @@ class TestParamValidatorStrictMode:
         """Test that strict mode allows all valid params."""
         validator = ParamValidator("strict")
         # Should not raise
-        result = validator.validate_and_map("deepgram", {
-            "language": "en",
-            "punctuate": True,
-        })
+        result = validator.validate_and_map(
+            "deepgram",
+            {
+                "language": "en",
+                "punctuate": True,
+            },
+        )
         assert result == {"language": "en", "punctuate": True}
 
 
@@ -284,7 +319,9 @@ class TestParamValidatorWarnMode:
     def test_warn_mode_issues_warning_unknown_param(self):
         """Test warn mode issues UserWarning for unknown param."""
         validator = ParamValidator("warn")
-        with pytest.warns(UserWarning, match="Unknown parameters for openai: \\['invalid_param'\\]"):
+        with pytest.warns(
+            UserWarning, match="Unknown parameters for openai: \\['invalid_param'\\]"
+        ):
             result = validator.validate_and_map("openai", {"invalid_param": True})
         # Param should be filtered out (not passed through in warn mode)
         assert result == {}
@@ -294,10 +331,13 @@ class TestParamValidatorWarnMode:
         validator = ParamValidator("warn")
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")  # Suppress warning for this test
-            result = validator.validate_and_map("openai", {
-                "language": "en",
-                "invalid_param": True,
-            })
+            result = validator.validate_and_map(
+                "openai",
+                {
+                    "language": "en",
+                    "invalid_param": True,
+                },
+            )
         # Valid param should pass through, invalid should be filtered
         assert result == {"language": "en"}
 
@@ -329,12 +369,15 @@ class TestParamValidatorPermissiveMode:
     def test_permissive_mode_mixed_valid_and_unknown(self):
         """Test permissive mode with mix of valid and unknown params."""
         validator = ParamValidator("permissive")
-        result = validator.validate_and_map("deepgram", {
-            "language": "en",
-            "punctuate": True,
-            "experimental_feature": True,
-            "beta_param": "value",
-        })
+        result = validator.validate_and_map(
+            "deepgram",
+            {
+                "language": "en",
+                "punctuate": True,
+                "experimental_feature": True,
+                "beta_param": "value",
+            },
+        )
         assert result == {
             "language": "en",
             "punctuate": True,
@@ -370,10 +413,13 @@ class TestParamValidatorEdgeCases:
         validator = ParamValidator("strict")
         # If someone passes both 'language' and 'language_code' to Google
         # The common param 'language' should map to 'language_code'
-        result = validator.validate_and_map("google", {
-            "language": "en",
-            "language_code": "fr-FR",  # This should be overridden
-        })
+        result = validator.validate_and_map(
+            "google",
+            {
+                "language": "en",
+                "language_code": "fr-FR",  # This should be overridden
+            },
+        )
         # language maps to language_code, then language_code as provider param is also valid
         # In current implementation, common param is processed first, then provider params
         # So we'll get both, but language takes precedence in the transformation

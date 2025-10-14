@@ -90,8 +90,7 @@ class DeepgramAudio(Audio):
                 # Use v5 API: client.listen.v1.media.transcribe_file()
                 # All parameters passed as kwargs, no PrerecordedOptions needed
                 response = self.client.listen.v1.media.transcribe_file(
-                    request=audio_bytes,
-                    **kwargs
+                    request=audio_bytes, **kwargs
                 )
 
                 # Convert Pydantic model to dict (v5 uses Pydantic v2)
@@ -148,7 +147,9 @@ class DeepgramAudio(Audio):
                 kwargs.setdefault("smart_format", "true")
                 kwargs.setdefault("punctuate", "true")
                 kwargs.setdefault("language", "en")
-                kwargs["interim_results"] = "true"  # Enable interim results for streaming
+                kwargs["interim_results"] = (
+                    "true"  # Enable interim results for streaming
+                )
 
                 # Remove parameters not supported by streaming
                 kwargs.pop("utterances", None)
@@ -207,15 +208,29 @@ class DeepgramAudio(Audio):
                     # Fallback for older SDK versions
                     try:
                         from deepgram.clients.listen import LiveTranscriptionEvents
+
                         EventType = LiveTranscriptionEvents
                     except ImportError:
                         raise ASRError("Cannot import Deepgram event types")
 
                 async with self.client.listen.v1.connect(**kwargs) as connection:
                     # Register event handlers
-                    connection.on(EventType.Transcript if hasattr(EventType, 'Transcript') else "Transcript", on_message)
-                    connection.on(EventType.Error if hasattr(EventType, 'Error') else "Error", on_error)
-                    connection.on(EventType.Close if hasattr(EventType, 'Close') else "Close", on_close)
+                    connection.on(
+                        (
+                            EventType.Transcript
+                            if hasattr(EventType, "Transcript")
+                            else "Transcript"
+                        ),
+                        on_message,
+                    )
+                    connection.on(
+                        EventType.Error if hasattr(EventType, "Error") else "Error",
+                        on_error,
+                    )
+                    connection.on(
+                        EventType.Close if hasattr(EventType, "Close") else "Close",
+                        on_close,
+                    )
 
                     # Send all chunks through connection
                     for audio_chunk in chunks:
@@ -247,7 +262,6 @@ class DeepgramAudio(Audio):
 
             except Exception as e:
                 raise ASRError(f"Deepgram streaming transcription error: {e}")
-
 
         def _prepare_audio_payload(self, file: Union[str, BinaryIO]) -> bytes:
             """Prepare audio payload for Deepgram API v5.
@@ -340,7 +354,6 @@ class DeepgramAudio(Audio):
                 pcm16 = (piece * 32767).astype(np.int16).tobytes()
                 connection.send(pcm16)
                 time.sleep(send_delay)  # Use synchronous sleep like reference
-
 
         def _parse_deepgram_response(self, response_dict: dict) -> TranscriptionResult:
             """Convert Deepgram API response to unified TranscriptionResult."""
