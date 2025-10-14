@@ -213,6 +213,35 @@ When `max_turns` is specified, `aisuite` will:
 In addition to `response.choices[0].message`, there is an additional field `response.choices[0].intermediate_messages`: which contains the list of all messages including tool interactions used. This can be used to continue the conversation with the model.
 For more detailed examples of tool calling, check out the `examples/tool_calling_abstraction.ipynb` notebook.
 
+## Audio Speech Recognition (ASR)
+
+> **Note:** ASR support is currently under development. The API and features described below are subject to change.
+
+`aisuite` is adding Audio Speech Recognition (ASR) with the same unified interface pattern:
+
+```python
+import aisuite as ai
+client = ai.Client()
+
+# Basic transcription
+result = client.audio.transcriptions.create(
+    model="openai:whisper-1",
+    file="speech.mp3",
+    language="en"
+)
+print(result.text)
+
+# Works with other providers
+result = client.audio.transcriptions.create(
+    model="deepgram:nova-2",
+    file="meeting.mp3",
+    punctuate=True
+)
+print(result.text)
+```
+
+**Providers in development:** OpenAI, Deepgram, Google.
+
 ## License
 
 aisuite is released under the MIT License. You are free to use, modify, and distribute the code for both commercial and non-commercial purposes.
