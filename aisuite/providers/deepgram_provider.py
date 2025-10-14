@@ -4,7 +4,7 @@ import numpy as np
 import queue
 import threading
 import time
-from typing import Union, BinaryIO, Optional, AsyncGenerator
+from typing import Union, BinaryIO, AsyncGenerator
 
 from aisuite.provider import Provider, ASRError, Audio
 from aisuite.framework.message import (
@@ -13,10 +13,8 @@ from aisuite.framework.message import (
     Word,
     Alternative,
     Channel,
-    TranscriptionOptions,
     StreamingTranscriptionChunk,
 )
-from aisuite.framework.parameter_mapper import ParameterMapper
 
 
 class DeepgramProvider(Provider):
@@ -33,14 +31,11 @@ class DeepgramProvider(Provider):
                 "Deepgram API key is missing. Please provide it in the config or set the DEEPGRAM_API_KEY environment variable."
             )
 
-        # Initialize Deepgram client
+        # Initialize Deepgram client (v5.0.0+)
         try:
-            from deepgram import DeepgramClient, DeepgramClientOptions
+            from deepgram import DeepgramClient
 
-            client_options = DeepgramClientOptions(
-                api_key=self.api_key, options={"keepalive": "true"}
-            )
-            self.client = DeepgramClient(self.api_key, client_options)
+            self.client = DeepgramClient(api_key=self.api_key)
         except ImportError:
             raise ImportError(
                 "Deepgram SDK is required. Install it with: pip install deepgram-sdk"
@@ -74,43 +69,59 @@ class DeepgramAudio(Audio):
             self,
             model: str,
             file: Union[str, BinaryIO],
-            options: Optional[TranscriptionOptions] = None,
             **kwargs,
         ) -> TranscriptionResult:
-            """Create audio transcription using Deepgram SDK."""
+            """
+            Create audio transcription using Deepgram SDK v5.
+
+            All parameters are already validated and mapped by the Client layer.
+            This is a simple pass-through to the Deepgram API.
+            """
             try:
-                from deepgram import PrerecordedOptions
+                # Add model to params and set defaults
+                kwargs["model"] = model
+                kwargs.setdefault("smart_format", True)
+                kwargs.setdefault("punctuate", True)
+                kwargs.setdefault("language", "en")
 
-                api_params = self._prepare_api_params(model, options, kwargs)
-                deepgram_options = PrerecordedOptions(**api_params)
-                payload = self._prepare_audio_payload(file)
+                # Get audio bytes
+                audio_bytes = self._prepare_audio_payload(file)
 
-                response = self.client.listen.rest.v("1").transcribe_file(
-                    payload, deepgram_options
+                # Use v5 API: client.listen.v1.media.transcribe_file()
+                # All parameters passed as kwargs, no PrerecordedOptions needed
+                response = self.client.listen.v1.media.transcribe_file(
+                    request=audio_bytes, **kwargs
                 )
 
-                response_dict = (
-                    response.to_dict() if hasattr(response, "to_dict") else response
-                )
+                # Convert Pydantic model to dict (v5 uses Pydantic v2)
+                if hasattr(response, "model_dump"):
+                    response_dict = response.model_dump()
+                elif hasattr(response, "to_dict"):
+                    response_dict = response.to_dict()
+                elif hasattr(response, "dict"):
+                    response_dict = response.dict()
+                else:
+                    response_dict = response
 
                 return self._parse_deepgram_response(response_dict)
 
             except Exception as e:
-                raise ASRError(f"Deepgram transcription error: {e}")
+                raise ASRError(f"Deepgram transcription error: {e}") from e
 
         async def create_stream_output(
             self,
             model: str,
             file: Union[str, BinaryIO],
-            options: Optional[TranscriptionOptions] = None,
             chunk_size_minutes: float = 3.0,
             **kwargs,
         ) -> AsyncGenerator[StreamingTranscriptionChunk, None]:
-            """Create streaming audio transcription using Deepgram SDK with chunked processing."""
-            try:
-                from deepgram import LiveOptions
-                from deepgram.clients.listen import LiveTranscriptionEvents
+            """
+            Create streaming audio transcription using Deepgram SDK v5 with chunked processing.
 
+            All parameters are already validated and mapped by the Client layer.
+            This implementation handles audio chunking and streaming.
+            """
+            try:
                 # Load and prepare audio
                 audio_data, sample_rate = await self._load_and_prepare_audio(file)
 
@@ -131,36 +142,35 @@ class DeepgramAudio(Audio):
                         )
                         chunks.append(audio_data[start_sample:end_sample])
 
-                # Setup API parameters
-                api_params = self._prepare_api_params(
-                    model, options, kwargs, is_streaming=True
+                # Setup API parameters for v5
+                kwargs["model"] = model
+                kwargs.setdefault("smart_format", "true")
+                kwargs.setdefault("punctuate", "true")
+                kwargs.setdefault("language", "en")
+                kwargs["interim_results"] = (
+                    "true"  # Enable interim results for streaming
                 )
-                api_params["interim_results"] = (
-                    True  # Enable interim results for streaming
-                )
 
-                # Add critical audio format parameters (matching reference)
-                api_params["encoding"] = "linear16"  # PCM16 format
-                api_params["sample_rate"] = 16000  # Match our target sample rate
-                api_params["channels"] = 1  # Mono audio
+                # Remove parameters not supported by streaming
+                kwargs.pop("utterances", None)
 
-                live_options = LiveOptions(**api_params)
+                # Add critical audio format parameters (as strings for v5)
+                kwargs["encoding"] = "linear16"  # PCM16 format
+                kwargs["sample_rate"] = "16000"  # Match our target sample rate
+                kwargs["channels"] = "1"  # Mono audio
 
-                # Create single connection for all chunks
-                connection = self.client.listen.websocket.v("1")
-
-                # Use thread-safe queue instead of asyncio.Queue for cross-thread communication
+                # Use thread-safe queue for cross-thread communication
                 transcript_queue = queue.Queue()
                 connection_closed = threading.Event()
 
-                def on_message(*args, **kwargs):
+                def on_message(*args, **message_kwargs):
                     """Handle transcript events"""
-                    # Extract result from args or kwargs (following reference pattern)
+                    # Extract result from args or kwargs
                     result = None
                     if len(args) >= 2:
                         result = args[1]
-                    elif "result" in kwargs:
-                        result = kwargs["result"]
+                    elif "result" in message_kwargs:
+                        result = message_kwargs["result"]
                     else:
                         return
 
@@ -172,48 +182,45 @@ class DeepgramAudio(Audio):
                                 is_final=getattr(result, "is_final", False),
                                 confidence=getattr(alt, "confidence", None),
                             )
-                            transcript_queue.put(chunk)  # Thread-safe put
+                            transcript_queue.put(chunk)
 
-                def on_error(*args, **kwargs):
+                def on_error(*args, **error_kwargs):
                     """Handle error events"""
-                    # Extract error from args or kwargs
                     error = None
                     if len(args) >= 2:
                         error = args[1]
-                    elif "error" in kwargs:
-                        error = kwargs["error"]
+                    elif "error" in error_kwargs:
+                        error = error_kwargs["error"]
 
                     if error:
                         transcript_queue.put(
                             ASRError(f"Deepgram streaming error: {error}")
-                        )  # Thread-safe put
+                        )
 
-                def on_close(*args, **kwargs):
+                def on_close(*args, **close_kwargs):
                     """Handle connection close events"""
                     connection_closed.set()
 
-                # Register event handlers
-                connection.on(LiveTranscriptionEvents.Transcript, on_message)
-                connection.on(LiveTranscriptionEvents.Error, on_error)
-                connection.on(LiveTranscriptionEvents.Close, on_close)
+                # Use v5 streaming API with context manager
+                from deepgram.core.events import EventType
 
-                # Start connection
-                if not connection.start(live_options):
-                    raise ASRError("Failed to start Deepgram streaming connection")
+                async with self.client.listen.v1.connect(**kwargs) as connection:
+                    # Register event handlers
+                    connection.on(EventType.Transcript, on_message)
+                    connection.on(EventType.Error, on_error)
+                    connection.on(EventType.Close, on_close)
 
-                # Send all chunks through single connection
-                try:
+                    # Send all chunks through connection
                     for audio_chunk in chunks:
                         self._send_audio_chunk(connection, audio_chunk)
 
-                    # Send CloseStream message to signal end of all chunks
+                    # Send CloseStream message to signal end
                     close_stream_message = json.dumps({"type": "CloseStream"})
                     connection.send(close_stream_message)
 
-                    # Yield results until connection closes naturally
+                    # Yield results until connection closes
                     while not connection_closed.is_set():
                         try:
-                            # Use thread-safe queue with timeout
                             chunk = transcript_queue.get(timeout=0.1)
                             if isinstance(chunk, Exception):
                                 raise chunk
@@ -231,43 +238,14 @@ class DeepgramAudio(Audio):
                         except queue.Empty:
                             break
 
-                except Exception as e:
-                    raise ASRError(f"Error during audio streaming: {e}")
-
             except Exception as e:
                 raise ASRError(f"Deepgram streaming transcription error: {e}")
 
-        def _extract_model_name(self, model: str) -> str:
-            """Use model name directly (client already extracted it)."""
-            return model
+        def _prepare_audio_payload(self, file: Union[str, BinaryIO]) -> bytes:
+            """Prepare audio payload for Deepgram API v5.
 
-        def _prepare_api_params(
-            self,
-            model: str,
-            options: Optional[TranscriptionOptions],
-            kwargs: dict,
-            is_streaming: bool = False,
-        ) -> dict:
-            """Prepare API parameters for Deepgram."""
-            if options is not None:
-                api_params = ParameterMapper.map_to_deepgram(options)
-            else:
-                api_params = self._map_openai_to_deepgram_params(kwargs)
-
-            # Remove parameters not supported by LiveOptions (streaming)
-            if is_streaming:
-                # utterances is only supported in batch/prerecorded, not streaming
-                api_params.pop("utterances", None)
-
-            model_name = self._extract_model_name(model)
-            api_params.setdefault("smart_format", True)
-            api_params.setdefault("punctuate", True)
-            api_params.setdefault("language", "en")
-            api_params["model"] = model_name
-            return api_params
-
-        def _prepare_audio_payload(self, file: Union[str, BinaryIO]) -> dict:
-            """Prepare audio payload for Deepgram API."""
+            Returns raw bytes instead of dict payload (v5 API change).
+            """
             if isinstance(file, str):
                 with open(file, "rb") as audio_file:
                     buffer_data = audio_file.read()
@@ -278,7 +256,7 @@ class DeepgramAudio(Audio):
                     raise ValueError(
                         "File must be a file path string or file-like object"
                     )
-            return {"buffer": buffer_data}
+            return buffer_data
 
         async def _load_and_prepare_audio(
             self, file: Union[str, BinaryIO]
@@ -354,26 +332,6 @@ class DeepgramAudio(Audio):
                 pcm16 = (piece * 32767).astype(np.int16).tobytes()
                 connection.send(pcm16)
                 time.sleep(send_delay)  # Use synchronous sleep like reference
-
-        def _map_openai_to_deepgram_params(self, openai_params: dict) -> dict:
-            """Map OpenAI-style parameters to Deepgram parameters."""
-            deepgram_params = {}
-
-            if "language" in openai_params:
-                deepgram_params["language"] = openai_params["language"]
-            if "prompt" in openai_params:
-                deepgram_params["keywords"] = openai_params["prompt"]
-            if "timestamp_granularities" in openai_params:
-                granularities = openai_params["timestamp_granularities"]
-                if "word" in granularities:
-                    deepgram_params["punctuate"] = True
-                    # Note: utterances is only for batch/prerecorded, not streaming
-
-            # Essential for streaming - map interim_results
-            if "interim_results" in openai_params:
-                deepgram_params["interim_results"] = openai_params["interim_results"]
-
-            return deepgram_params
 
         def _parse_deepgram_response(self, response_dict: dict) -> TranscriptionResult:
             """Convert Deepgram API response to unified TranscriptionResult."""

@@ -21,10 +21,8 @@ from aisuite.framework.message import (
     Word,
     Segment,
     Alternative,
-    TranscriptionOptions,
     StreamingTranscriptionChunk,
 )
-from aisuite.framework.parameter_mapper import ParameterMapper
 from aisuite.provider import Provider, ASRError, Audio
 
 
@@ -350,17 +348,25 @@ class GoogleAudio(Audio):
             self,
             model: str,
             file: Union[str, BinaryIO],
-            options: Optional[TranscriptionOptions] = None,
             **kwargs,
         ) -> TranscriptionResult:
-            """Create audio transcription using Google Cloud Speech-to-Text API."""
+            """
+            Create audio transcription using Google Cloud Speech-to-Text API.
+
+            All parameters are already validated and mapped by the Client layer.
+            This is a simple pass-through to the Google API.
+            """
             try:
                 from google.cloud import speech
 
-                api_params = self._prepare_api_params(model, options, kwargs)
+                # Set defaults
+                kwargs["model"] = model if model != "default" else "latest_long"
+                kwargs.setdefault("sample_rate_hertz", 16000)
+                kwargs.setdefault("enable_automatic_punctuation", True)
+
                 audio_data = self._read_audio_data(file)
                 audio = speech.RecognitionAudio(content=audio_data)
-                config = self._build_recognition_config(api_params, speech, file)
+                config = self._build_recognition_config(kwargs, speech, file)
 
                 response = self.provider.speech_client.recognize(
                     config=config, audio=audio
@@ -373,21 +379,29 @@ class GoogleAudio(Audio):
                     "Install it with: pip install google-cloud-speech"
                 )
             except Exception as e:
-                raise ASRError(f"Google Speech-to-Text error: {e}")
+                raise ASRError(f"Google Speech-to-Text error: {e}") from e
 
         async def create_stream_output(
             self,
             model: str,
             file: Union[str, BinaryIO],
-            options: Optional[TranscriptionOptions] = None,
             **kwargs,
         ) -> AsyncGenerator[StreamingTranscriptionChunk, None]:
-            """Create streaming audio transcription using Google Cloud Speech-to-Text API."""
+            """
+            Create streaming audio transcription using Google Cloud Speech-to-Text API.
+
+            All parameters are already validated and mapped by the Client layer.
+            This implementation handles streaming with Google's API.
+            """
             try:
                 from google.cloud import speech
 
-                api_params = self._prepare_api_params(model, options, kwargs)
-                config = self._build_recognition_config(api_params, speech, file)
+                # Set defaults
+                kwargs["model"] = model if model != "default" else "latest_long"
+                kwargs.setdefault("sample_rate_hertz", 16000)
+                kwargs.setdefault("enable_automatic_punctuation", True)
+
+                config = self._build_recognition_config(kwargs, speech, file)
                 streaming_config = speech.StreamingRecognitionConfig(
                     config=config, interim_results=True, single_utterance=False
                 )
@@ -417,28 +431,7 @@ class GoogleAudio(Audio):
                     "Install it with: pip install google-cloud-speech"
                 )
             except Exception as e:
-                raise ASRError(f"Google Speech-to-Text streaming error: {e}")
-
-        def _extract_model_name(self, model: str) -> str:
-            """Use model name directly (client already extracted it)."""
-            return model
-
-        def _prepare_api_params(
-            self, model: str, options: Optional[TranscriptionOptions], kwargs: dict
-        ) -> dict:
-            """Prepare API parameters for Google Speech."""
-            if options is not None:
-                api_params = ParameterMapper.map_to_google(options)
-            else:
-                api_params = self._map_openai_to_google_params(kwargs)
-
-            model_name = self._extract_model_name(model)
-            api_params.setdefault("sample_rate_hertz", 16000)
-            api_params.setdefault("punctuate", True)
-            api_params["model"] = (
-                model_name if model_name != "default" else "latest_long"
-            )
-            return api_params
+                raise ASRError(f"Google Speech-to-Text streaming error: {e}") from e
 
         def _read_audio_data(self, file: Union[str, BinaryIO]) -> bytes:
             """Read audio data from file or file-like object."""
@@ -468,27 +461,29 @@ class GoogleAudio(Audio):
             return speech.RecognitionConfig.AudioEncoding.LINEAR16
 
         def _build_recognition_config(
-            self, api_params: dict, speech, file: Union[str, BinaryIO]
+            self, params: dict, speech, file: Union[str, BinaryIO]
         ):
             """Build Google Speech RecognitionConfig from parameters."""
             # Auto-detect encoding if not specified
-            encoding = api_params.get("encoding")
+            encoding = params.get("encoding")
             if encoding is None:
                 encoding = self._detect_audio_encoding(file, speech)
 
             config_params = {
                 "encoding": encoding,
-                "sample_rate_hertz": api_params.get("sample_rate_hertz", 16000),
-                "language_code": api_params.get("language", "en-US"),
+                "sample_rate_hertz": params.get("sample_rate_hertz", 16000),
+                "language_code": params.get("language_code", "en-US"),
                 "enable_word_time_offsets": True,
                 "enable_word_confidence": True,
-                "enable_automatic_punctuation": api_params.get("punctuate", True),
-                "model": api_params["model"],
+                "enable_automatic_punctuation": params.get(
+                    "enable_automatic_punctuation", True
+                ),
+                "model": params["model"],
             }
 
             for param in ["max_alternatives", "profanity_filter", "speech_contexts"]:
-                if param in api_params:
-                    config_params[param] = api_params[param]
+                if param in params:
+                    config_params[param] = params[param]
 
             return speech.RecognitionConfig(**config_params)
 
@@ -504,24 +499,6 @@ class GoogleAudio(Audio):
                     yield speech.StreamingRecognizeRequest(audio_content=chunk)
 
             return request_generator()
-
-        def _map_openai_to_google_params(self, openai_params: dict) -> dict:
-            """Map OpenAI-style parameters to Google Speech parameters."""
-            google_params = {}
-
-            if "language" in openai_params:
-                google_params["language"] = openai_params["language"]
-            if "prompt" in openai_params:
-                google_params["speech_contexts"] = [
-                    {"phrases": [openai_params["prompt"]]}
-                ]
-            if "timestamp_granularities" in openai_params:
-                granularities = openai_params["timestamp_granularities"]
-                if "word" in granularities:
-                    google_params["enable_word_time_offsets"] = True
-                    google_params["enable_word_confidence"] = True
-
-            return google_params
 
         def _parse_google_response(self, response) -> TranscriptionResult:
             """Convert Google Speech-to-Text response to unified TranscriptionResult."""

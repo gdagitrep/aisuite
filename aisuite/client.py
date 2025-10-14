@@ -1,15 +1,19 @@
 from .provider import ProviderFactory
 import os
 from .utils.tools import Tools
-from typing import Union, BinaryIO, Optional, Any
+from typing import Union, BinaryIO, Optional, Any, Literal
 from .framework.message import (
-    TranscriptionOptions,
     TranscriptionResponse,
 )
+from .framework.asr_params import ParamValidator
 
 
 class Client:
-    def __init__(self, provider_configs: dict = {}):
+    def __init__(
+        self,
+        provider_configs: dict = {},
+        extra_param_mode: Literal["strict", "warn", "permissive"] = "warn",
+    ):
         """
         Initialize the client with provider configurations.
         Use the ProviderFactory to create provider instances.
@@ -27,9 +31,15 @@ class Client:
                         "aws_region": "us-west-2"
                     }
                 }
+            extra_param_mode (str): How to handle unknown ASR parameters.
+                - "strict": Raise ValueError on unknown params (production)
+                - "warn": Log warning on unknown params (default, development)
+                - "permissive": Allow all params without validation (testing)
         """
         self.providers = {}
         self.provider_configs = provider_configs
+        self.extra_param_mode = extra_param_mode
+        self.param_validator = ParamValidator(extra_param_mode)
         self._chat = None
         self._audio = None
 
@@ -282,50 +292,72 @@ class Transcriptions:
         *,
         model: str,
         file: Union[str, BinaryIO],
-        options: Optional[TranscriptionOptions] = None,
         **kwargs,
     ) -> TranscriptionResponse:
         """
-        Create a transcription using the specified model and file.
+        Create audio transcription with parameter validation.
+
+        This method uses a pass-through approach with validation:
+        - Common parameters (OpenAI-style) are auto-mapped to provider equivalents
+        - Provider-specific parameters are passed through directly
+        - Unknown parameters are handled based on extra_param_mode
 
         Args:
             model: Provider and model in format 'provider:model' (e.g., 'openai:whisper-1')
             file: Audio file to transcribe (file path or file-like object)
-            options: TranscriptionOptions instance with unified parameters (includes stream control)
-            **kwargs: Additional parameters (used if options is None, assumed to be OpenAI format)
+            **kwargs: Transcription parameters (provider-specific or common)
+                Common parameters (portable across providers):
+                    - language: Language code (e.g., "en")
+                    - prompt: Context for the transcription
+                    - temperature: Sampling temperature (0-1, OpenAI only)
+                Provider-specific parameters are passed through directly.
+                See provider documentation for valid parameters.
 
         Returns:
-            TranscriptionResponse: Unified response (batch or streaming based on options.stream)
+            TranscriptionResponse: Unified response (batch or streaming)
+
+        Raises:
+            ValueError: If model format invalid, provider not supported,
+                       or unknown params in strict mode
+
+        Examples:
+            # Portable code (OpenAI-style params)
+            >>> result = client.audio.transcriptions.create(
+            ...     model="openai:whisper-1",
+            ...     file="audio.mp3",
+            ...     language="en"
+            ... )
+
+            # Provider-specific features
+            >>> result = client.audio.transcriptions.create(
+            ...     model="deepgram:nova-2",
+            ...     file="audio.mp3",
+            ...     language="en",  # Common param
+            ...     punctuate=True,  # Deepgram-specific
+            ...     diarize=True     # Deepgram-specific
+            ... )
         """
-        # Validate options and kwargs
-        if options is not None:
-            if not options.has_any_parameters():
-                raise ValueError(
-                    "TranscriptionOptions provided but no parameters are set. "
-                    "Please set at least one parameter or pass None to use kwargs."
-                )
-            # TranscriptionOptions takes precedence, ignore kwargs
-            if kwargs:
-                import warnings
-
-                warnings.warn(
-                    "Both TranscriptionOptions and kwargs provided. Using TranscriptionOptions and ignoring kwargs.",
-                    UserWarning,
-                )
-        elif not kwargs:
-            # Neither options nor kwargs provided
-            raise ValueError(
-                "Either TranscriptionOptions or kwargs must be provided for transcription parameters."
-            )
-
-        # Check that correct format is used
+        # Validate model format
         if ":" not in model:
             raise ValueError(
                 f"Invalid model format. Expected 'provider:model', got '{model}'"
             )
 
-        # Extract the provider key from the model identifier
+        # Extract provider and model name
         provider_key, model_name = model.split(":", 1)
+
+        # Validate provider is supported
+        supported_providers = ProviderFactory.get_supported_providers()
+        if provider_key not in supported_providers:
+            raise ValueError(
+                f"Invalid provider key '{provider_key}'. "
+                f"Supported providers: {supported_providers}"
+            )
+
+        # Validate and map parameters
+        validated_params = self.client.param_validator.validate_and_map(
+            provider_key, kwargs
+        )
 
         # Initialize provider if not already initialized
         if provider_key not in self.client.providers:
@@ -348,13 +380,9 @@ class Transcriptions:
             )
 
         # Determine if streaming is requested
-        should_stream = False  # Default to batch processing
-        if options and options.stream is not None:
-            should_stream = options.stream
-        elif kwargs.get("stream"):
-            should_stream = kwargs.get("stream", False)
+        should_stream = validated_params.get("stream", False)
 
-        # Delegate the transcription to the correct provider's implementation
+        # Delegate to provider implementation
         try:
             if should_stream:
                 # Check if provider supports output streaming
@@ -362,11 +390,11 @@ class Transcriptions:
                     provider.audio.transcriptions, "create_stream_output"
                 ):
                     return provider.audio.transcriptions.create_stream_output(
-                        model_name, file, options=options, **kwargs
+                        model_name, file, **validated_params
                     )
                 else:
                     raise ValueError(
-                        f"Provider '{provider_key}' does not support output streaming transcription."
+                        f"Provider '{provider_key}' does not support streaming transcription."
                     )
             else:
                 # Non-streaming (batch) transcription
@@ -374,7 +402,7 @@ class Transcriptions:
                     provider.audio.transcriptions, "create"
                 ):
                     return provider.audio.transcriptions.create(
-                        model_name, file, options=options, **kwargs
+                        model_name, file, **validated_params
                     )
                 else:
                     raise ValueError(

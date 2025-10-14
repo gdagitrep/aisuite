@@ -1,6 +1,6 @@
 import openai
 import os
-from typing import Union, BinaryIO, Optional, AsyncGenerator
+from typing import Union, BinaryIO, AsyncGenerator
 from aisuite.provider import Provider, LLMError, ASRError, Audio
 from aisuite.providers.message_converter import OpenAICompliantMessageConverter
 from aisuite.framework.message import (
@@ -8,9 +8,7 @@ from aisuite.framework.message import (
     Segment,
     Word,
     StreamingTranscriptionChunk,
-    TranscriptionOptions,
 )
-from aisuite.framework.parameter_mapper import ParameterMapper
 
 
 class OpenaiProvider(Provider):
@@ -71,91 +69,97 @@ class OpenAIAudio(Audio):
             self,
             model: str,
             file: Union[str, BinaryIO],
-            options: Optional[TranscriptionOptions] = None,
             **kwargs,
         ) -> TranscriptionResult:
-            """Create audio transcription using OpenAI Whisper API."""
-            try:
-                # Determine parameters to use
-                if options is not None:
-                    api_params = ParameterMapper.map_to_openai(options)
-                else:
-                    api_params = kwargs
+            """
+            Create audio transcription using OpenAI Whisper API.
 
-                # Use the model name directly (client already extracted it)
-                model_name = model
+            All parameters are already validated and mapped by the Client layer.
+            This is a simple pass-through to the OpenAI API.
+            """
+            try:
+                # Handle TranscriptionOptions object if passed
+                if "options" in kwargs:
+                    options = kwargs.pop("options")
+                    # Extract all non-None attributes from options object
+                    if hasattr(options, "__dict__"):
+                        for key, value in options.__dict__.items():
+                            if value is not None and key not in kwargs:
+                                kwargs[key] = value
 
                 # Handle timestamp_granularities requirement
-                if "timestamp_granularities" in api_params:
+                if "timestamp_granularities" in kwargs:
                     # OpenAI requires verbose_json format for timestamp_granularities
-                    api_params["response_format"] = "verbose_json"
+                    kwargs["response_format"] = "verbose_json"
 
                 # Handle file input
                 if isinstance(file, str):
                     with open(file, "rb") as audio_file:
                         response = self.client.audio.transcriptions.create(
-                            file=audio_file, model=model_name, **api_params
+                            file=audio_file, model=model, **kwargs
                         )
                 else:
                     response = self.client.audio.transcriptions.create(
-                        file=file, model=model_name, **api_params
+                        file=file, model=model, **kwargs
                     )
 
                 return self._parse_openai_response(response)
 
             except Exception as e:
-                raise ASRError(f"OpenAI transcription error: {e}")
+                raise ASRError(f"OpenAI transcription error: {e}") from e
 
         async def create_stream_output(
             self,
             model: str,
             file: Union[str, BinaryIO],
-            options: Optional[TranscriptionOptions] = None,
             **kwargs,
         ) -> AsyncGenerator[StreamingTranscriptionChunk, None]:
-            """Create output streaming audio transcription using OpenAI Whisper API."""
+            """
+            Create streaming audio transcription using OpenAI Whisper API.
+
+            All parameters are already validated and mapped by the Client layer.
+            This is a simple pass-through to the OpenAI API with streaming enabled.
+            """
             try:
-                # Determine parameters to use
-                if options is not None:
-                    api_params = ParameterMapper.map_to_openai(options)
-                else:
-                    api_params = kwargs
+                # Handle TranscriptionOptions object if passed
+                if "options" in kwargs:
+                    options = kwargs.pop("options")
+                    # Extract all non-None attributes from options object
+                    if hasattr(options, "__dict__"):
+                        for key, value in options.__dict__.items():
+                            if value is not None and key not in kwargs:
+                                kwargs[key] = value
 
-                # Use the model name directly (client already extracted it)
-                model_name = model
-
-                # Try real streaming with OpenAI API
-                api_params["stream"] = True
+                # Enable streaming
+                kwargs["stream"] = True
 
                 # Handle timestamp_granularities requirement
-                if "timestamp_granularities" in api_params:
+                if "timestamp_granularities" in kwargs:
                     # OpenAI requires verbose_json format for timestamp_granularities
                     if (
-                        "response_format" in api_params
-                        and api_params["response_format"] != "verbose_json"
+                        "response_format" in kwargs
+                        and kwargs["response_format"] != "verbose_json"
                     ):
                         raise ASRError(
                             f"OpenAI timestamp_granularities requires response_format='verbose_json', "
-                            f"but got '{api_params['response_format']}'. "
-                            f"Either remove timestamp_granularities or use response_format='verbose_json'. "
-                            f"Note: Model '{model_name}' may not support verbose_json format."
+                            f"but got '{kwargs['response_format']}'. "
+                            f"Either remove timestamp_granularities or use response_format='verbose_json'."
                         )
                     else:
-                        api_params["response_format"] = "verbose_json"
+                        kwargs["response_format"] = "verbose_json"
 
                 try:
-
                     if isinstance(file, str):
                         with open(file, "rb") as audio_file:
                             response_stream = self.client.audio.transcriptions.create(
-                                file=audio_file, model=model_name, **api_params
+                                file=audio_file, model=model, **kwargs
                             )
                     else:
                         response_stream = self.client.audio.transcriptions.create(
-                            file=file, model=model_name, **api_params
+                            file=file, model=model, **kwargs
                         )
 
-                    # Process streaming response - handle new event types
+                    # Process streaming response - handle event types
                     for event in response_stream:
                         # Handle TranscriptionTextDeltaEvent (incremental text)
                         if (
@@ -183,10 +187,10 @@ class OpenAIAudio(Audio):
                 except Exception as stream_error:
                     raise ASRError(
                         f"OpenAI streaming transcription error: {stream_error}"
-                    )
+                    ) from stream_error
 
             except Exception as e:
-                raise ASRError(f"OpenAI streaming transcription error: {e}")
+                raise ASRError(f"OpenAI streaming transcription error: {e}") from e
 
         def _parse_openai_response(self, response) -> TranscriptionResult:
             """Parse OpenAI API response into TranscriptionResult."""
