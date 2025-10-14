@@ -202,35 +202,13 @@ class DeepgramAudio(Audio):
                     connection_closed.set()
 
                 # Use v5 streaming API with context manager
-                try:
-                    from deepgram.core.events import EventType
-                except ImportError:
-                    # Fallback for older SDK versions
-                    try:
-                        from deepgram.clients.listen import LiveTranscriptionEvents
-
-                        EventType = LiveTranscriptionEvents
-                    except ImportError:
-                        raise ASRError("Cannot import Deepgram event types")
+                from deepgram.core.events import EventType
 
                 async with self.client.listen.v1.connect(**kwargs) as connection:
                     # Register event handlers
-                    connection.on(
-                        (
-                            EventType.Transcript
-                            if hasattr(EventType, "Transcript")
-                            else "Transcript"
-                        ),
-                        on_message,
-                    )
-                    connection.on(
-                        EventType.Error if hasattr(EventType, "Error") else "Error",
-                        on_error,
-                    )
-                    connection.on(
-                        EventType.Close if hasattr(EventType, "Close") else "Close",
-                        on_close,
-                    )
+                    connection.on(EventType.Transcript, on_message)
+                    connection.on(EventType.Error, on_error)
+                    connection.on(EventType.Close, on_close)
 
                     # Send all chunks through connection
                     for audio_chunk in chunks:
