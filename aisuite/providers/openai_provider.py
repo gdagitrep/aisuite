@@ -1,5 +1,6 @@
 import openai
 import os
+import time
 from typing import Union, BinaryIO, AsyncGenerator
 from aisuite.provider import Provider, LLMError, ASRError, Audio
 from aisuite.providers.message_converter import OpenAICompliantMessageConverter
@@ -37,11 +38,12 @@ class OpenaiProvider(Provider):
         self.audio = OpenAIAudio(self.client)
 
     def chat_completions_create(self, model, messages, **kwargs):
-        # Log the request details
-        self.log_request("chat_completions_create", model=model, messages=messages, **kwargs)
+        # Log the request details and create Langfuse trace
+        trace = self.log_request_with_langfuse("chat_completions_create", model, messages, **kwargs)
         
         # Any exception raised by OpenAI will be returned to the caller.
         # Maybe we should catch them and raise a custom LLMError.
+        start_time = time.time()
         try:
             transformed_messages = self.transformer.convert_request(messages)
             response = self.client.chat.completions.create(
@@ -49,8 +51,12 @@ class OpenaiProvider(Provider):
                 messages=transformed_messages,
                 **kwargs,  # Pass any additional arguments to the OpenAI API
             )
+            execution_time = time.time() - start_time
+            self.update_langfuse_trace(trace, response, execution_time)
             return response
         except Exception as e:
+            execution_time = time.time() - start_time
+            self.update_langfuse_trace(trace, None, execution_time, e)
             raise LLMError(f"An error occurred: {e}")
 
 

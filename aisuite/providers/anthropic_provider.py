@@ -4,6 +4,7 @@
 
 import anthropic
 import json
+import time
 from aisuite.provider import Provider
 from aisuite.framework import ChatCompletionResponse
 from aisuite.framework.message import (
@@ -214,16 +215,25 @@ class AnthropicProvider(Provider):
 
     def chat_completions_create(self, model, messages, **kwargs):
         """Create a chat completion using the Anthropic API."""
-        # Log the request details
-        self.log_request("chat_completions_create", model=model, messages=messages, **kwargs)
+        # Log the request details and create Langfuse trace
+        trace = self.log_request_with_langfuse("chat_completions_create", model, messages, **kwargs)
         
-        kwargs = self._prepare_kwargs(kwargs)
-        system_message, converted_messages = self.converter.convert_request(messages)
+        start_time = time.time()
+        try:
+            kwargs = self._prepare_kwargs(kwargs)
+            system_message, converted_messages = self.converter.convert_request(messages)
 
-        response = self.client.messages.create(
-            model=model, system=system_message, messages=converted_messages, **kwargs
-        )
-        return self.converter.convert_response(response)
+            response = self.client.messages.create(
+                model=model, system=system_message, messages=converted_messages, **kwargs
+            )
+            execution_time = time.time() - start_time
+            converted_response = self.converter.convert_response(response)
+            self.update_langfuse_trace(trace, converted_response, execution_time)
+            return converted_response
+        except Exception as e:
+            execution_time = time.time() - start_time
+            self.update_langfuse_trace(trace, None, execution_time, e)
+            raise
 
     def _prepare_kwargs(self, kwargs):
         """Prepare kwargs for the API call."""

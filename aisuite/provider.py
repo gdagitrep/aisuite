@@ -8,6 +8,8 @@ import time
 from typing import Union, BinaryIO, Optional
 from opentelemetry import trace
 
+# Import Langfuse integration
+from .langfuse_integration import get_langfuse_integration
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -63,6 +65,23 @@ class Provider(ABC):
             return wrapper
 
         return decorator
+
+    def log_request_with_langfuse(self, method_name, model, messages, **kwargs):
+        """Log request details and create Langfuse trace."""
+        # Standard logging
+        self.log_request(method_name, model=model, messages=messages, **kwargs)
+        
+        # Langfuse tracing
+        langfuse = get_langfuse_integration()
+        if langfuse.enabled:
+            return langfuse.trace_llm_call(method_name, model, messages, **kwargs)
+        return None
+
+    def update_langfuse_trace(self, trace, response, execution_time, error=None):
+        """Update Langfuse trace with response."""
+        langfuse = get_langfuse_integration()
+        if langfuse.enabled and trace:
+            langfuse.update_trace_with_response(trace, response, execution_time, error)
 
     @abstractmethod
     def chat_completions_create(self, model, messages):
