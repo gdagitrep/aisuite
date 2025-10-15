@@ -57,15 +57,21 @@ def is_langfuse_available():
 
 def get_langfuse_traced_client(original_client):
     """
-    Replace the original OpenAI client with Langfuse-traced version.
+    Return the Langfuse-wrapped client for automatic LLM call tracing.
+    
+    This ensures that individual LLM calls are automatically traced
+    and will appear as spans within the @observe trace.
     
     Args:
         original_client: The original OpenAI client
         
     Returns:
-        Langfuse-traced OpenAI client or original client if Langfuse not available
+        Langfuse-wrapped client for automatic tracing
     """
+    # Get the Langfuse client for automatic LLM call tracing
     langfuse_client = get_langfuse_client()
     if langfuse_client:
         return langfuse_client
-    return original_client
+    else:
+        # Fallback to original client if Langfuse is not available
+        return original_client
