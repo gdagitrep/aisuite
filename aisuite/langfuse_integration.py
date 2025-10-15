@@ -9,14 +9,16 @@ import time
 from typing import Optional, Dict, Any, List
 from functools import wraps
 
-try:
-    from langfuse import Langfuse
-    from langfuse.decorators import observe
-    LANGFUSE_AVAILABLE = True
-except ImportError:
-    LANGFUSE_AVAILABLE = False
-    Langfuse = None
-    observe = None
+def _check_langfuse_availability():
+    """Check if Langfuse is available at runtime."""
+    try:
+        from langfuse import Langfuse
+        return True, Langfuse, None
+    except ImportError:
+        return False, None, None
+
+# Check availability at import time
+LANGFUSE_AVAILABLE, Langfuse, observe = _check_langfuse_availability()
 
 
 class LangfuseIntegration:
@@ -36,7 +38,9 @@ class LangfuseIntegration:
             base_url: Langfuse base URL (defaults to LANGFUSE_BASE_URL env var)
             enabled: Whether to enable Langfuse tracing
         """
-        self.enabled = enabled and LANGFUSE_AVAILABLE
+        # Check Langfuse availability at runtime
+        langfuse_available, Langfuse, observe = _check_langfuse_availability()
+        self.enabled = enabled and langfuse_available
         
         if not self.enabled:
             self.langfuse = None
@@ -54,10 +58,11 @@ class LangfuseIntegration:
             return
             
         try:
+            # Initialize Langfuse with correct parameters
             self.langfuse = Langfuse(
                 secret_key=self.secret_key,
                 public_key=self.public_key,
-                base_url=self.base_url
+                host=self.base_url
             )
             print("Langfuse integration initialized successfully")
         except Exception as e:
@@ -86,8 +91,8 @@ class LangfuseIntegration:
             return None
             
         try:
-            # Create a trace for this LLM call
-            trace = self.langfuse.trace(
+            # Create a span for this LLM call
+            span = self.langfuse.start_span(
                 name=f"aisuite_{method_name}",
                 input={
                     "model": model,
@@ -101,9 +106,9 @@ class LangfuseIntegration:
                 }
             )
             
-            return trace
+            return span
         except Exception as e:
-            print(f"Failed to create Langfuse trace: {e}")
+            print(f"Failed to create Langfuse span: {e}")
             return None
 
     def update_trace_with_response(self, 
@@ -115,7 +120,7 @@ class LangfuseIntegration:
         Update the trace with the response.
         
         Args:
-            trace: Langfuse trace object
+            trace: Langfuse span object
             response: Response from the LLM
             execution_time: Time taken for execution
             error: Any error that occurred
@@ -124,6 +129,7 @@ class LangfuseIntegration:
             return
             
         try:
+            # Update the span with output data
             if error:
                 trace.update(
                     output={"error": str(error)},
@@ -142,13 +148,15 @@ class LangfuseIntegration:
             # Add execution time as metadata
             trace.update(
                 metadata={
-                    **trace.metadata,
                     "execution_time_seconds": execution_time
                 }
             )
             
+            # End the span
+            trace.end()
+            
         except Exception as e:
-            print(f"Failed to update Langfuse trace: {e}")
+            print(f"Failed to update Langfuse span: {e}")
 
     def _extract_response_content(self, response: Any) -> Dict[str, Any]:
         """Extract meaningful content from the response for Langfuse."""
