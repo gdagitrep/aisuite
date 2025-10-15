@@ -14,6 +14,7 @@ from aisuite.framework.message import (
     CompletionUsage,
     PromptTokensDetails,
 )
+from aisuite.langfuse_official_integration import get_langfuse_traced_client
 
 # Define a constant for the default max_tokens value
 DEFAULT_MAX_TOKENS = 4096
@@ -211,12 +212,15 @@ class AnthropicProvider(Provider):
     def __init__(self, **config):
         """Initialize the Anthropic provider with the given configuration."""
         self.client = anthropic.Anthropic(**config)
+        
+        # Note: Anthropic doesn't have a direct Langfuse integration like OpenAI
+        # The tracing will be handled at the aisuite level
         self.converter = AnthropicMessageConverter()
 
     def chat_completions_create(self, model, messages, **kwargs):
         """Create a chat completion using the Anthropic API."""
-        # Log the request details and create Langfuse trace
-        trace = self.log_request_with_langfuse("chat_completions_create", model, messages, **kwargs)
+        # Log the request details
+        self.log_request("chat_completions_create", model=model, messages=messages, **kwargs)
         
         start_time = time.time()
         try:
@@ -228,11 +232,15 @@ class AnthropicProvider(Provider):
             )
             execution_time = time.time() - start_time
             converted_response = self.converter.convert_response(response)
-            self.update_langfuse_trace(trace, converted_response, execution_time)
+            self.log_request("chat_completions_create", 
+                           model=model, 
+                           messages=messages, 
+                           response_time=execution_time,
+                           **kwargs)
             return converted_response
         except Exception as e:
             execution_time = time.time() - start_time
-            self.update_langfuse_trace(trace, None, execution_time, e)
+            self.log_error("chat_completions_create", e)
             raise
 
     def _prepare_kwargs(self, kwargs):

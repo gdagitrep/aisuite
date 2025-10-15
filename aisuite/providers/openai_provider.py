@@ -10,6 +10,7 @@ from aisuite.framework.message import (
     Word,
     StreamingTranscriptionChunk,
 )
+from aisuite.langfuse_official_integration import get_langfuse_traced_client
 
 
 class OpenaiProvider(Provider):
@@ -31,6 +32,10 @@ class OpenaiProvider(Provider):
 
         # Pass the entire config to the OpenAI client constructor
         self.client = openai.OpenAI(**config)
+        
+        # Replace with Langfuse-traced client if available
+        self.client = get_langfuse_traced_client(self.client)
+        
         self.transformer = OpenAICompliantMessageConverter()
 
         # Initialize audio functionality
@@ -38,8 +43,8 @@ class OpenaiProvider(Provider):
         self.audio = OpenAIAudio(self.client)
 
     def chat_completions_create(self, model, messages, **kwargs):
-        # Log the request details and create Langfuse trace
-        trace = self.log_request_with_langfuse("chat_completions_create", model, messages, **kwargs)
+        # Log the request details
+        self.log_request("chat_completions_create", model=model, messages=messages, **kwargs)
         
         # Any exception raised by OpenAI will be returned to the caller.
         # Maybe we should catch them and raise a custom LLMError.
@@ -52,11 +57,15 @@ class OpenaiProvider(Provider):
                 **kwargs,  # Pass any additional arguments to the OpenAI API
             )
             execution_time = time.time() - start_time
-            self.update_langfuse_trace(trace, response, execution_time)
+            self.log_request("chat_completions_create", 
+                           model=model, 
+                           messages=messages, 
+                           response_time=execution_time,
+                           **kwargs)
             return response
         except Exception as e:
             execution_time = time.time() - start_time
-            self.update_langfuse_trace(trace, None, execution_time, e)
+            self.log_error("chat_completions_create", e)
             raise LLMError(f"An error occurred: {e}")
 
 
