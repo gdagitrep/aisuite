@@ -37,6 +37,9 @@ class OpenaiProvider(Provider):
         self.audio = OpenAIAudio(self.client)
 
     def chat_completions_create(self, model, messages, **kwargs):
+        # Log the request details
+        self.log_request("chat_completions_create", model=model, messages=messages, **kwargs)
+        
         # Any exception raised by OpenAI will be returned to the caller.
         # Maybe we should catch them and raise a custom LLMError.
         try:

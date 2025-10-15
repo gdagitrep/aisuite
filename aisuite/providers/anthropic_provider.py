@@ -214,6 +214,9 @@ class AnthropicProvider(Provider):
 
     def chat_completions_create(self, model, messages, **kwargs):
         """Create a chat completion using the Anthropic API."""
+        # Log the request details
+        self.log_request("chat_completions_create", model=model, messages=messages, **kwargs)
+        
         kwargs = self._prepare_kwargs(kwargs)
         system_message, converted_messages = self.converter.convert_request(messages)
 
