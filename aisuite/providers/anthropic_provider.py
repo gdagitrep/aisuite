@@ -219,9 +219,11 @@ class AnthropicProvider(Provider):
 
     def chat_completions_create(self, model, messages, **kwargs):
         """Create a chat completion using the Anthropic API."""
-        # Log the request details
-        self.log_request("chat_completions_create", model=model, messages=messages, **kwargs)
-        
+        # Log the request details and create a Langfuse span (if enabled)
+        lf_span = self.log_request_with_langfuse(
+            "chat_completions_create", model=model, messages=messages, **kwargs
+        )
+
         start_time = time.time()
         try:
             kwargs = self._prepare_kwargs(kwargs)
@@ -232,14 +234,19 @@ class AnthropicProvider(Provider):
             )
             execution_time = time.time() - start_time
             converted_response = self.converter.convert_response(response)
-            self.log_request("chat_completions_create", 
-                           model=model, 
-                           messages=messages, 
-                           response_time=execution_time,
-                           **kwargs)
+            # Update Langfuse span with normalized response
+            self.update_langfuse_trace(lf_span, converted_response, execution_time)
+            self.log_request(
+                "chat_completions_create",
+                model=model,
+                messages=messages,
+                response_time=execution_time,
+                **kwargs,
+            )
             return converted_response
         except Exception as e:
             execution_time = time.time() - start_time
+            self.update_langfuse_trace(lf_span, None, execution_time, e)
             self.log_error("chat_completions_create", e)
             raise
 

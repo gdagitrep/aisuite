@@ -30,11 +30,10 @@ class OpenaiProvider(Provider):
         # infer certain values from the environment variables.
         # Eg: OPENAI_API_KEY, OPENAI_ORG_ID, OPENAI_PROJECT_ID, OPENAI_BASE_URL, etc.
 
-        # Pass the entire config to the OpenAI client constructor
-        self.client = openai.OpenAI(**config)
-        
-        # Replace with Langfuse-traced client if available
-        self.client = get_langfuse_traced_client(self.client)
+        # Instantiate OpenAI client (optionally wrapped by Langfuse SDK)
+        # Use the Langfuse-provided OpenAI module if available, otherwise the official OpenAI module
+        openai_module = get_langfuse_traced_client(openai)
+        self.client = openai_module.OpenAI(**config)
         
         self.transformer = OpenAICompliantMessageConverter()
 
@@ -43,9 +42,11 @@ class OpenaiProvider(Provider):
         self.audio = OpenAIAudio(self.client)
 
     def chat_completions_create(self, model, messages, **kwargs):
-        # Log the request details
-        self.log_request("chat_completions_create", model=model, messages=messages, **kwargs)
-        
+        # Log the request details and create a Langfuse span (if enabled)
+        lf_span = self.log_request_with_langfuse(
+            "chat_completions_create", model=model, messages=messages, **kwargs
+        )
+
         # Any exception raised by OpenAI will be returned to the caller.
         # Maybe we should catch them and raise a custom LLMError.
         start_time = time.time()
@@ -57,14 +58,21 @@ class OpenaiProvider(Provider):
                 **kwargs,  # Pass any additional arguments to the OpenAI API
             )
             execution_time = time.time() - start_time
-            self.log_request("chat_completions_create", 
-                           model=model, 
-                           messages=messages, 
-                           response_time=execution_time,
-                           **kwargs)
+            # Update Langfuse span with the response (minimal output)
+            self.update_langfuse_trace(lf_span, response, execution_time)
+            # Structured log with latency
+            self.log_request(
+                "chat_completions_create",
+                model=model,
+                messages=messages,
+                response_time=execution_time,
+                **kwargs,
+            )
             return response
         except Exception as e:
             execution_time = time.time() - start_time
+            # Update Langfuse span with error
+            self.update_langfuse_trace(lf_span, None, execution_time, e)
             self.log_error("chat_completions_create", e)
             raise LLMError(f"An error occurred: {e}")
 
